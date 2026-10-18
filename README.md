@@ -5,7 +5,7 @@
 - 仓库：https://github.com/2869220254/SillyTavern-WorldbookEnhance
 - 作者：niyah_jz
 - 许可：AGPL-3.0（见 LICENSE）
-- 实测环境：SillyTavern 1.18.0，Android Chrome（红米 K70）/ Windows Chrome
+- 实测环境：SillyTavern 1.18.0，Android Chrome&Via（红米 K70）/ Windows Chrome
 
 ## 它做什么
 
