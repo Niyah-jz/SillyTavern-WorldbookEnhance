@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '1.0';
+    const VERSION = '1.0.1';
     const ROOT_ID = 'wbm-list';
     const COLLAPSED_COUNT = 5;
 
@@ -491,6 +491,13 @@
 
     /* 浮层外壳（遮罩 + 面板）：两个选择器（选择以编辑 / 移动·复制目标）共用。
        几何全写 inline，不依赖样式表能否命中，也不怕被宿主的层叠上下文压制。 */
+    /* 键盘（视觉视口）真正遮住的高度 → 弹窗该上移多少像素：取一半正好把它挪到可见区中央；
+       上限 160px，免得极端情况下把窗口顶出屏幕。Chrome 缩小布局视口时算出来是 0。 */
+    function keyboardShiftPx(innerH, vvH, vvTop) {
+        const covered = Math.max(0, Number(innerH || 0) - (Number(vvH || 0) + Number(vvTop || 0)));
+        return Math.min(Math.round(covered / 2), 160);
+    }
+
     function makePickerShell() {
         const mask = el('div', 'wbm-picker');
         const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
@@ -500,11 +507,14 @@
         mask.style.position = 'fixed';
         mask.style.top = '0';
         mask.style.left = '0';
-        mask.style.width = vw + 'px';
-        mask.style.height = vh + 'px';
+        /* 用 100% 而不是创建时的像素值：键盘弹起把布局视口压小时，遮罩会跟着缩，
+           窗口始终居中在"看得见的那块"里（原来写死像素，键盘一来就贴到底部看不见） */
+        mask.style.width = '100%';
+        mask.style.height = '100%';
         mask.style.zIndex = '2147483000';
         mask.style.display = 'flex';
-        mask.style.alignItems = desktop ? 'center' : 'flex-end';
+        /* 两端都垂直居中：手机键盘弹起时，贴底的窗口会被输入法整块盖住 */
+        mask.style.alignItems = 'center';
         mask.style.justifyContent = 'center';
         mask.style.background = 'rgba(0,0,0,.62)';
         /* 挂到 <html> 后不再继承 body 的字体/颜色，这里手动接上，避免出现系统默认黑字 */
@@ -535,8 +545,12 @@
         sheet.style.flexDirection = 'column';
         sheet.style.width = '100%';
         sheet.style.maxWidth = '760px';
-        sheet.style.maxHeight = desktop ? '70vh' : '86vh';
-        sheet.style.margin = desktop ? '0' : '0 8px 8px';
+        /* dvh 会随键盘变化（支持时优先），不认识 dvh 的旧内核退回 vh */
+        const supportsDvh = typeof CSS !== 'undefined' && CSS.supports
+            && CSS.supports('height', '1dvh');
+        const maxH = desktop ? 'min(72dvh, 720px)' : 'min(78dvh, 640px)';
+        sheet.style.maxHeight = supportsDvh ? maxH : (desktop ? '72vh' : '78vh');
+        sheet.style.margin = desktop ? '8px' : '8px';
         sheet.style.borderRadius = '16px';
         sheet.style.border = '1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.16))';
         sheet.style.background = 'var(--SmartThemeBlurTintColor, rgba(28,28,38,.96))';
@@ -544,6 +558,26 @@
         sheet.style.backdropFilter = 'blur(10px)';
         sheet.style.overflow = 'hidden';
         mask.appendChild(sheet);
+
+        /* 有些浏览器（WebView / Via 这类）键盘是"盖"在页面上、不缩小布局视口，
+           这时纯靠居中仍会被下半截挡住：按键盘实际遮住的高度把窗口上移一半，
+           让它稳稳落在键盘上方。Chrome 那种会缩小视口的算出来是 0，不会重复上移。
+           只在窗口存在期间挂这两个事件，关闭后自动摘掉，不做轮询。 */
+        const vv = window.visualViewport;
+        if (vv) {
+            const follow = () => {
+                if (!sheet.isConnected) {
+                    vv.removeEventListener('resize', follow);
+                    vv.removeEventListener('scroll', follow);
+                    return;
+                }
+                const shift = keyboardShiftPx(window.innerHeight, vv.height, vv.offsetTop);
+                sheet.style.transform = shift > 1 ? 'translateY(-' + shift + 'px)' : '';
+            };
+            vv.addEventListener('resize', follow);
+            vv.addEventListener('scroll', follow);
+            follow();
+        }
         return { mask, sheet };
     }
 
