@@ -22,11 +22,11 @@
 (function () {
     'use strict';
 
-    const VERSION = '1.0.4.1';
+    const VERSION = '1.0.4.4';
     /* 构建标记：版本号不随小修变化（都写 1.0.3），只看版本号分不出新旧，
        所以另外标一个构建号，控制台里能直接看出页面跑的是哪一份。
        发布时与 manifest 里 js/css 的 ?ver 保持一致（构建脚本会校验）。 */
-    const BUILD = '1.0.4.1';
+    const BUILD = '1.0.4.4';
     const ROOT_ID = 'wbm-list';
     const COLLAPSED_COUNT = 5;
 
@@ -2488,10 +2488,22 @@
 
     function openSelect(node) {
         const $ = window.jQuery;
+        try { if (node.closest('.select2-container') && $) return; } catch (err) { /* 忽略 */ }
+        /* 「用户主动打开」的标记：单击拦截放行、change 回滚也不动手；
+           20 秒后自动收回，避免一次双击把这个字段永久解锁 */
+        node.classList.add('wbm-select-open');
+        const release = () => node.classList.remove('wbm-select-open');
+        /* 多选列表框（绑定到角色或标签、筛选生成触发器）本身就把选项摊在页面上，
+           没有"弹出层"这一说，所以不调 showPicker，直接解锁让用户点选项 */
+        if (node.multiple) {
+            setTimeout(release, 20000);
+            toast('info', '已解锁：现在点选项即可勾选/取消，20 秒后自动锁定');
+            return;
+        }
         try {
-            if (node.closest('.select2-container') && $) return;
             if (typeof node.showPicker === 'function') {
                 node.showPicker();
+                setTimeout(release, 20000);
                 return;
             }
         } catch (err) { /* 落到下面的兜底 */ }
@@ -2499,10 +2511,11 @@
         node.classList.add('wbm-field-editing');
         node.removeAttribute('readonly');
         setTimeout(() => {
+            release();
             node.classList.remove('wbm-field-editing');
             if (clickLockOn()) lockControl(node);
-        }, 8000);
-        toast('info', '这里已临时解锁，8 秒内可以直接选择');
+        }, 20000);
+        toast('info', '这里已临时解锁，20 秒内可以直接选择');
     }
 
     function ensureContentGuard() {
@@ -2539,7 +2552,12 @@
                 if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
                 return;
             }
-            if (!node.matches('input, textarea, select')) return;
+            /* <select multiple> 里被点的是 <option>，不是 select 本身：按它所属的 select 判断，
+               否则 option 会漏过拦截、一碰就改选中项（手机端误触的主因） */
+            const ownerSel = node.matches('select') ? node : (node.closest ? node.closest('select') : null);
+            if (!node.matches('input, textarea, select') && !ownerSel) return;
+            if (ownerSel && (ownerSel.classList.contains('wbm-field-editing')
+                || ownerSel.classList.contains('wbm-select-open'))) return;
             /* 带自动补全的文本框（自动化 ID 这类）：锁定态单击会聚焦并弹出候选，
                点候选等于直接改值，所以连单击一起吞掉，只留双击。 */
             if (isTextField(node)) {
@@ -2570,6 +2588,102 @@
         };
         document.addEventListener('input', blockDuringEdit, true);
         document.addEventListener('change', blockDuringEdit, true);
+        /* 移动端的关键差异：<select multiple>（绑定到角色或标签、筛选生成触发器）的选中项
+           由浏览器在触屏 touchend/pointerup 阶段就直接改掉，根本轮不到 mousedown 的
+           preventDefault，所以桌面上能拦、手机上一碰就变。
+           这里在 touchstart（最早的阶段）就吞掉它，并自己实现「双击解锁」：
+           同一控件 420ms 内连点两次 → 进入可编辑（wbm-select-open），之后正常点选。 */
+        let wbmLastTapNode = null;
+        let wbmLastTapAt = 0;
+        let wbmHintAt = 0;
+        const wbmTouchHint = () => {
+            const now = Date.now();
+            if (now - wbmHintAt > 5000) {
+                wbmHintAt = now;
+                toast('info', '条目已锁定：双击才能改');
+            }
+        };
+        /* 触屏上要拦两类东西，都是在 touchstart 阶段就生效了，等 mousedown 已经来晚了：
+           ① <select multiple>（绑定到角色或标签、筛选生成触发器）：选中项在触摸阶段就被改；
+           ② 带自动补全的输入框（自动化 ID）：touchstart 就聚焦、弹出候选，点候选等于直接改值，
+              readonly 挡不住它。两者统一在这里吞掉，双击＝进入编辑。 */
+        const touchGuard = (event) => {
+            const t = event.target;
+            if (!t || !t.closest) return;
+            if (!inEntryList(t)) return;
+            if (!clickLockOn()) return;
+            if (t.closest(LOCK_EXCLUDE_SEL)) return;
+            const sel = (t.matches && t.matches('select')) ? t : t.closest('select');
+            const field = (t.matches && t.matches('input, textarea')) ? t : null;
+            const autoField = field && field.classList && field.classList.contains('ui-autocomplete-input') ? field : null;
+            const target = sel || autoField;
+            if (!target) return;
+            if (target.classList.contains('wbm-select-open') || target.classList.contains('wbm-field-editing')) return;
+            if (event.cancelable) event.preventDefault();
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+            const now = Date.now();
+            if (wbmLastTapNode === target && now - wbmLastTapAt < 420) {
+                wbmLastTapNode = null;
+                wbmLastTapAt = 0;
+                if (sel) openSelect(sel);
+                else openFieldEditor(autoField);
+                return;
+            }
+            wbmLastTapNode = target;
+            wbmLastTapAt = now;
+            if (autoField) {
+                try { const $ = window.jQuery; if ($) $(autoField).autocomplete('close'); } catch (err) { /* 忽略 */ }
+            }
+            wbmTouchHint();
+        };
+        document.addEventListener('touchstart', touchGuard, { capture: true, passive: false });
+        /* 兜底：万一控件被重绘、或 lockRow 没赶上新节点，只要"锁定态下还能聚焦"就当场锁回去。
+           判据是能不能改值，不是 class 上有没有 wbm-field-locked。 */
+        document.addEventListener('focusin', (event) => {
+            const node = event.target;
+            if (!node || !inEntryList(node)) return;
+            if (!clickLockOn()) return;
+            if (node.closest(LOCK_EXCLUDE_SEL)) return;
+            if (!node.matches || !node.matches('input, textarea, select')) return;
+            if (node.classList.contains('wbm-field-editing')) return;
+            if (isTextField(node)) node.readOnly = true;
+            node.classList.add('wbm-field-locked');
+            try {
+                const $ = window.jQuery;
+                if ($ && node.classList.contains('ui-autocomplete-input')) $(node).autocomplete('close');
+            } catch (err) { /* 忽略 */ }
+            try { node.blur(); } catch (err) { /* 忽略 */ }
+        }, true);
+
+        /* 兜底：万一本机浏览器在 preventDefault 之后仍改动了多选里的选中项，
+           锁定状态下把 change 直接回滚（快照在 mousedown 时记下）。
+           双击打开过的字段带 wbm-select-open，不参与回滚。 */
+        document.addEventListener('mousedown', (event) => {
+            const t = event.target;
+            if (!t || !t.closest) return;
+            const sel = (t.matches && t.matches('select')) ? t : t.closest('select');
+            if (!sel || !inEntryList(sel)) return;
+            if (sel.classList.contains('wbm-field-editing') || sel.classList.contains('wbm-select-open')) return;
+            try {
+                sel.dataset.wbmPrev = JSON.stringify(
+                    Array.prototype.map.call(sel.selectedOptions || [], (o) => o.value));
+            } catch (err) { /* 忽略 */ }
+        }, true);
+        document.addEventListener('change', (event) => {
+            const sel = event.target;
+            if (!sel || sel.tagName !== 'SELECT') return;
+            if (!inEntryList(sel)) return;
+            if (!clickLockOn()) return;
+            if (sel.classList.contains('wbm-field-editing') || sel.classList.contains('wbm-select-open')) return;
+            const prev = sel.dataset.wbmPrev;
+            if (!prev) return;
+            let want;
+            try { want = new Set(JSON.parse(prev)); } catch (err) { return; }
+            Array.prototype.forEach.call(sel.options, (o) => { o.selected = want.has(o.value); });
+            event.stopPropagation();
+            toast('info', '条目已锁定：双击这个下拉才能改');
+        }, true);
         /* 双击：按字段类型分流 */
         document.addEventListener('dblclick', (event) => {
             const node = event.target;
