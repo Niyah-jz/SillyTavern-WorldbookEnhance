@@ -2259,9 +2259,11 @@
         if (!list) return;
         const book = currentEditingName();
         const favs = book ? favEntryKeySet() : new Set();
-        /* 接管成功时整本书已由宿主管线排好，页内不再摆 DOM 顺序；只有兜底时才用 order */
-        const pin = entryFavPinOn() && !wiFilterPatched;
-        list.classList.toggle('wbm-order-on', pin);
+        /* 接管成功时整本书已由宿主管线排好，页内不再摆 DOM 顺序；只有兜底时才用 order。
+           注意：开关本身的状态看 entryFavPinOn()，不能用"页内排序是否生效"当状态。 */
+        const pinOn = entryFavPinOn();
+        const pinPage = pinOn && !wiFilterPatched;
+        list.classList.toggle('wbm-order-on', pinPage);
         const rows = list.querySelectorAll('.world_entry');
         const opts = { favOnly: entryFavOnly, disabledOnly: entryDisabledOnly, states: entryStateFilter };
         for (let i = 0; i < rows.length; i++) {
@@ -2275,7 +2277,7 @@
             };
             /* 接管成功后由宿主管线负责筛选，这里只剩置顶排序，不再重复隐藏 */
             if (!wiFilterPatched) row.classList.toggle('wbm-fav-hidden', !entryPassesFilter(info, opts));
-            if (pin) row.style.order = faved ? '0' : '1';
+            if (pinPage) row.style.order = faved ? '0' : '1';
             else if (row.style.order) row.style.order = '';
         }
         const chipOnly = document.querySelector('.wbm-entry-favbar [data-role="entry-favonly"]');
@@ -2288,8 +2290,8 @@
         syncSearchScopeChips();
         const chipPin = document.querySelector('.wbm-entry-favbar [data-role="entry-favpin"]');
         if (chipPin) {
-            chipPin.classList.toggle('on', pin);
-            chipPin.textContent = pin ? '收藏置顶：开' : '收藏置顶：关';
+            chipPin.classList.toggle('on', pinOn);
+            chipPin.textContent = pinOn ? '收藏置顶：开' : '收藏置顶：关';
         }
     }
 
@@ -2584,6 +2586,8 @@
             event.stopPropagation();
             setEntryFavPin(!entryFavPinOn());
             applyEntryFavFilter();
+            /* 置顶现在由宿主管线按整本书排序，必须让它重算一次列表 */
+            refreshFilterView();
         });
         const disabledBtn = el('button', 'menu_button wbm-chip' + (entryDisabledOnly ? ' on' : ''), '只看已禁用');
         disabledBtn.type = 'button';
