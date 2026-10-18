@@ -1,0 +1,11 @@
+{
+    "display_name": "世界书增强",
+    "loading_order": 1000,
+    "requires": [],
+    "optional": [],
+    "js": "index.js?ver=2.11.5",
+    "css": "style.css?ver=2.11.5",
+    "author": "niyah_jz",
+    "version": "2.11.5",
+    "homePage": "https://github.com/2869220254/SillyTavern-WorldbookEnhance"
+}
