@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '1.0.2';
+    const VERSION = '1.0.3';
     const ROOT_ID = 'wbm-list';
     const COLLAPSED_COUNT = 5;
 
@@ -157,6 +157,7 @@
         favPin: false,
         favEntries: [],
         entryFavPin: false,
+        entryClickLock: true,
         searchScope: SEARCH_SCOPE_VALUES.slice(),
         loaded: false,
         mode: 'local',
@@ -282,6 +283,7 @@
                 store.favEntries = Array.isArray(cfg.favEntries)
                     ? cfg.favEntries.filter((x) => x && x.book && x.uid !== undefined) : [];
                 store.entryFavPin = !!cfg.entryFavPin;
+                store.entryClickLock = cfg.entryClickLock !== false;
                 store.searchScope = normalizeSearchScope(cfg.searchScope, SEARCH_SCOPE_VALUES.slice());
             } else {
                 store.favBooks = legacy.books;
@@ -343,6 +345,7 @@
             cfg.favPin = !!store.favPin;
             cfg.favEntries = store.favEntries.slice();
             cfg.entryFavPin = !!store.entryFavPin;
+            cfg.entryClickLock = store.entryClickLock !== false;
             cfg.searchScope = normalizeSearchScope(store.searchScope, SEARCH_SCOPE_VALUES.slice());
             store.searchScope = cfg.searchScope.slice();
             if (!Array.isArray(cfg.history)) cfg.history = [];
@@ -1451,7 +1454,8 @@
             case 'undo-replace': return '撤销替换 ' + count + ' 条：' + from;
             case 'enable': return '启用世界书：' + from;
             case 'disable': return '停用世界书：' + from;
-            case 'edit': return '编辑保存：' + from + '（共 ' + count + ' 条）';
+            case 'edit': return '编辑正文：' + from;
+            case 'undo-edit': return '撤销正文编辑：' + from;
             default: return String(item.act || '');
         }
     }
@@ -1628,7 +1632,8 @@
                     if (item.bookGone) meta.push('原书已删除，只能翻看记录');
                     if (meta.length) col.appendChild(el('span', 'wbm-hist-names', meta.join(' · ')));
                     row.appendChild(col);
-                    if ((item.act === 'replace' || item.act === 'keywords' || item.act === 'healthfix')
+                    if ((item.act === 'replace' || item.act === 'keywords' || item.act === 'healthfix'
+                        || item.act === 'edit')
                         && Array.isArray(item.entries) && item.entries.length) {
                         if (item.bookGone) {
                             row.appendChild(el('span', 'wbm-hist-gone', '原书已删'));
@@ -2110,6 +2115,474 @@
         ensureHeaderAlignObserver();
         alignEntryHeadersOnce();
         applyEntryFavFilter();
+        ensureContentGuard();
+        lockEntryContents();
+    }
+
+    /* ---------------- 条目防误触：字段级保护 ----------------
+       结论（master 判的）：整条双击解锁不好用。改成"按字段双击"：
+         · 文本/数字字段：默认 readonly（仍可选中复制），双击该字段才解锁，字段右侧出现「取消 / 保存」，
+           按保存只把这一处改动交给宿主（它自己写 data、镜像、存盘、算词数）；按取消还原，不写盘。
+         · 复选框（不可递归 / 防止进一步递归 / 延迟到递归 / 无视预算限额 等全部）：单击无效，
+           双击＝切换一次并立刻保存（勾选本身就是结果，不需要确认键）。
+         · 下拉（触发策略、插入位置）：单击无效，双击＝打开原生下拉，选完由宿主即时保存。
+         · 关键词选择器同理：单击无效，双击打开。
+         · 启用开关（killSwitch）、折叠箭头、我们的按钮不受影响。
+       顶栏不再单独放图标，开关挪到筛选条最左边的胶囊上（master 定）。 */
+    let contentGuardBound = false;
+    const LOCK_EXCLUDE_SEL = '.killSwitch, .inline-drawer-toggle, .editor_maximize, .wbm-entry-actions,'
+        + ' .wbm-preview-btn, .wbm-fav-entry-btn, .wbm-field-bar, .wbm-edit-bar, .move_entry_button,'
+        + ' .duplicate_entry_button, .delete_entry_button';
+    /* 保存时才写的数据字段（按控件 name 索引）。关键词与可选过滤器每个条目有两个同名控件
+       （标签式 select 与纯文本 textarea，手机端用后者），两个都要能双击改，所以都登记 */
+    const FIELD_DATA_NAME = {
+        content: 'content',
+        comment: 'comment',
+        key: 'key',
+        keysecondary: 'keysecondary',
+        depth: 'depth',
+        order: 'order',
+        probability: 'probability',
+        automationId: 'automationId',
+    };
+    /* 这几个字段在酒馆数据里还有一份旧格式镜像，写回时要一起同步（撤销用） */
+    const UNDO_FIELD_KEYS = {
+        depth: 'extensions.depth',
+        order: 'insertion_order',
+        probability: 'extensions.probability',
+        automationId: 'extensions.automation_id',
+    };
+
+    function clickLockOn() {
+        return store.entryClickLock !== false;
+    }
+
+    function setClickLock(on) {
+        store.entryClickLock = !!on;
+        persistStore();
+        syncLockChip();
+    }
+
+    function lockChipLabel() {
+        return clickLockOn() ? '双击编辑' : '单击编辑';
+    }
+
+    function syncLockChip() {
+        document.querySelectorAll('[data-role="entry-clicklock"]').forEach((chip) => {
+            chip.classList.toggle('on', clickLockOn());
+            chip.textContent = lockChipLabel();
+            const text = clickLockOn()
+                ? '双击编辑：条目内容已锁定，单击改不动；想改就在那个字段上双击（复选框与下拉也是双击）'
+                : '单击编辑：已解除锁定，条目内容点一下就能改';
+            chip.title = text;
+            chip.setAttribute('aria-label', text);
+        });
+    }
+
+    function inEntryList(node) {
+        try { return node instanceof Element && !!node.closest('#world_popup_entries_list'); } catch (err) { return false; }
+    }
+
+    function entryControls(row) {
+        return Array.prototype.slice.call(row.querySelectorAll('input, textarea, select'))
+            .filter((node) => !node.closest(LOCK_EXCLUDE_SEL));
+    }
+
+    function isTextField(node) {
+        if (!node) return false;
+        if (node.tagName === 'TEXTAREA') return true;
+        if (node.tagName !== 'INPUT') return false;
+        const type = String(node.type || 'text').toLowerCase();
+        return type === 'text' || type === 'number' || type === 'search' || type === '';
+    }
+
+    function lockControl(node) {
+        if (isTextField(node)) node.readOnly = true;
+        if (node.classList && node.classList.contains('ui-autocomplete-input')) {
+            try { const $ = window.jQuery; if ($) $(node).autocomplete('close'); } catch (err) { /* 忽略 */ }
+        }
+        node.classList.add('wbm-field-locked');
+        node.classList.remove('wbm-field-editing');
+    }
+
+    function unlockControl(node) {
+        if (isTextField(node)) node.readOnly = false;
+        node.classList.remove('wbm-field-locked');
+        node.classList.add('wbm-field-editing');
+    }
+
+    function lockRow(row) {
+        if (!row) return;
+        const on = clickLockOn();
+        const bar = row.querySelector('.wbm-edit-bar');
+        const barVisible = !!bar && bar.hidden === false;
+        const editNode = row.__wbmEditNode;
+        const editing = on && barVisible && editNode && (editNode.isConnected !== false) && row.contains(editNode)
+            ? editNode : null;
+        entryControls(row).forEach((node) => {
+            const isEditing = node.classList.contains('wbm-field-editing');
+            /* 只有"当前正在编辑的那一个控件"可以保持解锁，其余残留编辑态一律锁回去
+               （防止重绘/换字段后某个框卡在可编辑状态，单击就能改） */
+            if (isEditing && node !== editing) {
+                node.classList.remove('wbm-field-editing');
+                if (on) lockControl(node);
+                else if (isTextField(node)) node.readOnly = false;
+                return;
+            }
+            if (isEditing) return;
+            if (on) lockControl(node);
+            else {
+                if (isTextField(node)) node.readOnly = false;
+                node.classList.remove('wbm-field-locked');
+            }
+        });
+        syncLockChip();
+    }
+
+    function lockEntryContents() {
+        const list = document.querySelector('#world_popup_entries_list');
+        if (!list) return;
+        list.querySelectorAll('.world_entry').forEach(lockRow);
+        syncLockChip();
+    }
+
+    /* 取消/保存统一放在「内容」标题那一行的空位上（master 定的位置），
+       一个条目只有一条动作条，谁在编辑就作用于谁；展开状态下才有这一行。 */
+    function contentHeadingAnchor(row) {
+        const marks = row.querySelectorAll('.mdhotkey_location, [data-i18n="Content"]');
+        for (let i = 0; i < marks.length; i++) {
+            const mark = marks[i];
+            const text = String(mark.textContent || '').trim();
+            if (text !== 'Content' && text !== '内容') continue;
+            /* 酒馆同时在隐藏块里留了一份英文标签，跳掉看不见的那个 */
+            if (mark.offsetParent === null) continue;
+            const holder = mark.parentElement;
+            if (holder && holder !== row) return holder;
+        }
+        const max = row.querySelector('.editor_maximize');
+        return max && max.parentElement ? max.parentElement : null;
+    }
+
+    /* 动作条只作用于"到底哪一个控件在被编辑"：按元素身份取，不按 name 去找。
+       关键词（key）与可选过滤器（keysecondary）各有两个同名控件——标签式 select 与纯文本
+       textarea，按 name 找会拿到那个看不见的，于是取消/保存落空、亮着的框保持解锁。 */
+    function barTarget(row) {
+        if (!row) return null;
+        const ref = row.__wbmEditNode;
+        if (ref && (ref.isConnected === undefined || ref.isConnected) && row.contains(ref)) return ref;
+        const list = Array.prototype.slice.call(row.querySelectorAll('.wbm-field-editing'));
+        const visible = list.filter((node) => node.getClientRects().length > 0);
+        return visible[0] || list[0] || null;
+    }
+
+    function editBar(row) {
+        let bar = row.querySelector('.wbm-edit-bar');
+        if (bar) return bar;
+        bar = el('span', 'wbm-edit-bar');
+        bar.hidden = true;
+        const cancel = el('button', 'wbm-edit-btn wbm-edit-cancel', '取消');
+        cancel.type = 'button';
+        const save = el('button', 'wbm-edit-btn wbm-edit-save', '保存');
+        save.type = 'button';
+        save.title = '保存这一处改动（Ctrl+Enter）';
+        bar.appendChild(cancel);
+        bar.appendChild(save);
+        const anchor = contentHeadingAnchor(row);
+        if (anchor && anchor.parentElement) {
+            anchor.insertAdjacentElement('afterend', bar);
+        } else {
+            const row2 = row.querySelector('.world_entry_thin_controls');
+            if (row2) row2.appendChild(bar); else row.appendChild(bar);
+        }
+        bar.addEventListener('click', (event) => {
+            const btn = event.target instanceof Element ? event.target.closest('button') : null;
+            if (!btn) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const node = barTarget(row);
+            if (!node) {
+                bar.hidden = true;
+                delete row.dataset.wbmEditField;
+                delete row.__wbmEditNode;
+                lockRow(row);
+                return;
+            }
+            if (btn.classList.contains('wbm-edit-cancel')) cancelField(node);
+            else saveField(node);
+        });
+        return bar;
+    }
+
+    /* 这一行条目到底属于哪本世界书：以条目自己的 data-current-world 为准。
+       编辑器下拉的选中项在某些时序下会和实际渲染的书不同步（比如列表刚重建过），
+       按下拉取书名会把改动/历史记到别人书上，撤销时就会写错书。 */
+    function rowBook(row) {
+        const mv = row ? row.querySelector('.move_entry_button') : null;
+        const name = mv ? String(mv.getAttribute('data-current-world') || '') : '';
+        return name || currentEditingName();
+    }
+
+    async function dataValueOf(row, field) {
+        const uid = (function () {
+            const mv = row.querySelector('.move_entry_button');
+            return mv ? String(mv.getAttribute('data-uid') || '') : '';
+        })();
+        const book = rowBook(row);
+        if (!uid || !book) return undefined;
+        try {
+            const mod = await import('/scripts/world-info.js');
+            const data = await mod.loadWorldInfo(book);
+            const entry = data && data.entries ? data.entries[String(uid)] : null;
+            if (!entry) return undefined;
+            const value = entry[field];
+            return Array.isArray(value) ? value.slice() : value;
+        } catch (err) {
+            return undefined;
+        }
+    }
+
+    async function openFieldEditor(node) {
+        if (!node || node.classList.contains('wbm-field-editing')) return;
+        const row = node.closest('.world_entry');
+        if (!row) return;
+        /* 同一时间只允许一个字段处于编辑态，旧的先还原 */
+        row.querySelectorAll('.wbm-field-editing').forEach((other) => {
+            if (other !== node) cancelField(other);
+        });
+        node.dataset.wbmBefore = node.value == null ? '' : String(node.value);
+        if (node.name && FIELD_DATA_NAME[node.name]) {
+            const before = await dataValueOf(row, FIELD_DATA_NAME[node.name]);
+            node.dataset.wbmDataBefore = before === undefined ? '' : JSON.stringify(before);
+        }
+        unlockControl(node);
+        row.__wbmEditNode = node;
+        row.dataset.wbmEditField = node.name || '';
+        const bar = editBar(row);
+        if (bar) bar.hidden = false;
+        try { node.focus({ preventScroll: true }); } catch (err) { node.focus(); }
+        const pos = node.value ? node.value.length : 0;
+        try { node.setSelectionRange(pos, pos); } catch (err) { /* 忽略 */ }
+    }
+
+    function closeFieldEditor(node, revert) {
+        if (!node) return;
+        if (revert && node.dataset.wbmBefore != null) node.value = node.dataset.wbmBefore;
+        delete node.dataset.wbmBefore;
+        delete node.dataset.wbmDataBefore;
+        const row = node.closest('.world_entry');
+        if (row) {
+            const bar = row.querySelector('.wbm-edit-bar');
+            if (bar) bar.hidden = true;
+            delete row.dataset.wbmEditField;
+            if (row.__wbmEditNode === node) delete row.__wbmEditNode;
+        }
+        node.classList.remove('wbm-field-editing');
+        if (row && clickLockOn()) lockControl(node);
+        else node.classList.remove('wbm-field-locked');
+        /* 收尾扫一遍：这一行里若还有别的残留编辑态（同名控件拿错、重绘时序），一起还原并锁回去，
+           不让任何一个框停在"亮着且单击可改"的状态 */
+        if (!row) return;
+        Array.prototype.slice.call(row.querySelectorAll('.wbm-field-editing')).forEach((other) => {
+            if (other === node) return;
+            if (other.dataset.wbmBefore != null) other.value = other.dataset.wbmBefore;
+            delete other.dataset.wbmBefore;
+            delete other.dataset.wbmDataBefore;
+            other.classList.remove('wbm-field-editing');
+            if (clickLockOn()) lockControl(other);
+            else if (isTextField(other)) other.readOnly = false;
+        });
+    }
+
+    function cancelField(node) {
+        closeFieldEditor(node, true);
+    }
+
+    function saveField(node) {
+        const before = node.dataset.wbmBefore == null ? '' : String(node.dataset.wbmBefore);
+        const dataBeforeRaw = node.dataset.wbmDataBefore;
+        const value = node.value == null ? '' : String(node.value);
+        const row = node.closest('.world_entry');
+        const name = node.name || '';
+        if (!row || !name || !FIELD_DATA_NAME[name]) { closeFieldEditor(node, false); return; }
+        if (value === before) {
+            closeFieldEditor(node, false);
+            toast('info', '这一处没改动，不用保存');
+            return;
+        }
+        /* 先解锁再放行一次原生 input/change，宿主的处理器会把值写进 data、镜像并存盘 */
+        node.readOnly = false;
+        row.dataset.wbmSaving = '1';
+        try {
+            node.dispatchEvent(new Event('input', { bubbles: true }));
+            node.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch (err) {
+            console.warn('[wbm] 保存字段时宿主没接住', err);
+            delete row.dataset.wbmSaving;
+            closeFieldEditor(node, false);
+            toast('warning', '保存没成功，这一处可能没写进去');
+            return;
+        }
+        delete row.dataset.wbmSaving;
+        closeFieldEditor(node, false);
+        const field = FIELD_DATA_NAME[name];
+        const uid = (function () {
+            const mv = row.querySelector('.move_entry_button');
+            return mv ? String(mv.getAttribute('data-uid') || '') : '';
+        })();
+        const book = rowBook(row);
+        const nameInput = row.querySelector('textarea[name="comment"]');
+        const label = nameInput && nameInput.value ? String(nameInput.value) : '';
+        let beforeValue;
+        try { beforeValue = dataBeforeRaw ? JSON.parse(dataBeforeRaw) : undefined; } catch (err) { beforeValue = undefined; }
+        const beforeMap = {};
+        if (beforeValue !== undefined) beforeMap[field] = beforeValue;
+        else if (field === 'content' || field === 'comment') beforeMap[field] = before;
+        pushHistory({
+            act: 'edit',
+            at: Date.now(),
+            from: book,
+            to: book,
+            count: 1,
+            entries: Object.keys(beforeMap).length ? [{ uid, name: label.slice(0, 40), before: beforeMap }] : [],
+            payloadDropped: Object.keys(beforeMap).length ? undefined : true,
+            names: [label.slice(0, 20)],
+        });
+        toast('info', '已保存这一处，改错了可以在操作历史里撤销');
+    }
+
+    function toggleCheckbox(node) {
+        node.checked = !node.checked;
+        try {
+            const $ = window.jQuery;
+            if ($) $(node).trigger('input');
+            else node.dispatchEvent(new Event('input', { bubbles: true }));
+        } catch (err) {
+            console.warn('[wbm] 勾选没写进去', err);
+        }
+        toast('info', node.checked ? '已勾选（双击可再切换）' : '已取消勾选（双击可再切换）');
+    }
+
+    function openSelect(node) {
+        const $ = window.jQuery;
+        try {
+            if (node.closest('.select2-container') && $) return;
+            if (typeof node.showPicker === 'function') {
+                node.showPicker();
+                return;
+            }
+        } catch (err) { /* 落到下面的兜底 */ }
+        /* 没有 showPicker 的浏览器：临时放开一下，让用户直接点 */
+        node.classList.add('wbm-field-editing');
+        node.removeAttribute('readonly');
+        setTimeout(() => {
+            node.classList.remove('wbm-field-editing');
+            if (clickLockOn()) lockControl(node);
+        }, 8000);
+        toast('info', '这里已临时解锁，8 秒内可以直接选择');
+    }
+
+    function ensureContentGuard() {
+        if (contentGuardBound) return;
+        contentGuardBound = true;
+        /* 单击：文本字段已经 readonly 不用管；复选框与下拉在锁定状态下吞掉单击 */
+        const swallow = (event) => {
+            const node = event.target;
+            if (!inEntryList(node)) return;
+            if (node.closest(LOCK_EXCLUDE_SEL)) return;
+            if (node.closest('.wbm-field-bar')) return;
+            if (!clickLockOn()) return;
+            /* select2 的可见外壳与它内部的搜索框都不是"输入框"的常规语义，单独拦 */
+            if (node.closest('.select2-container, .select2-selection')) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+                return;
+            }
+            /* 复选框普遍包在 <label class="checkbox_label"> 里，点的是 label/span，不是 input */
+            const label = node.closest('label');
+            if (label && label.querySelector('input[type="checkbox"], input[type="radio"], select')) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+                return;
+            }
+            if (!node.matches('input, textarea, select')) return;
+            /* 带自动补全的文本框（自动化 ID 这类）：锁定态单击会聚焦并弹出候选，
+               点候选等于直接改值，所以连单击一起吞掉，只留双击。 */
+            if (isTextField(node)) {
+                if (node.classList.contains('wbm-field-editing')) return;
+                if (!node.classList.contains('ui-autocomplete-input')) return;
+                try { const $ = window.jQuery; if ($) $(node).autocomplete('close'); } catch (err) { /* 忽略 */ }
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+                return;
+            }
+            if (node.classList.contains('wbm-field-editing')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+        };
+        document.addEventListener('mousedown', swallow, true);
+        document.addEventListener('click', swallow, true);
+        /* 编辑期间不许宿主实时保存：只有按「保存」时我们放行一次 */
+        const blockDuringEdit = (event) => {
+            const node = event.target;
+            if (!inEntryList(node)) return;
+            if (!node.classList || !node.classList.contains('wbm-field-editing')) return;
+            const row = node.closest('.world_entry');
+            if (!row || row.dataset.wbmSaving === '1') return;
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+        };
+        document.addEventListener('input', blockDuringEdit, true);
+        document.addEventListener('change', blockDuringEdit, true);
+        /* 双击：按字段类型分流 */
+        document.addEventListener('dblclick', (event) => {
+            const node = event.target;
+            if (!inEntryList(node)) return;
+            if (node.closest(LOCK_EXCLUDE_SEL)) return;
+            if (node.closest('.wbm-field-bar')) return;
+            let control = node.matches('input, textarea, select') ? node : node.closest('input, textarea, select');
+            if (!control) {
+                const lab = node.closest('label');
+                if (lab) control = lab.querySelector('input[type="checkbox"], input[type="radio"], select');
+            }
+            if (!control) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (!clickLockOn()) return;
+            if (isTextField(control)) { openFieldEditor(control); return; }
+            if (control.tagName === 'SELECT') { openSelect(control); return; }
+            if (control.type === 'checkbox' || control.type === 'radio') { toggleCheckbox(control); return; }
+        }, true);
+        /* Ctrl+Enter 保存这一处，Esc 取消 */
+        document.addEventListener('keydown', (event) => {
+            const node = event.target;
+            if (!inEntryList(node) || !node.matches('textarea, input')) return;
+            if (!node.classList.contains('wbm-field-editing')) return;
+            if (event.key === 'Escape') { event.preventDefault(); cancelField(node); return; }
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); saveField(node); }
+        }, true);
+        /* select2 那层壳：单击吞掉，双击打开 */
+        document.addEventListener('dblclick', (event) => {
+            const shell = event.target instanceof Element ? event.target.closest('.select2-container') : null;
+            if (!shell || !inEntryList(shell)) return;
+            if (!clickLockOn()) return;
+            const select = (function () {
+                const row = shell.closest('.world_entry');
+                const prev = shell.previousElementSibling;
+                if (prev && prev.matches('select, input, textarea')) return prev;
+                return row ? row.querySelector('select[name="position"], select[name="entryStateSelector"]') : null;
+            })();
+            if (!select) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const $ = window.jQuery;
+            const s2 = $ && $(select).data('select2');
+            if (s2 && typeof s2.open === 'function') { s2.open(); return; }
+            openSelect(select);
+        }, true);
     }
 
     /* 表头列宽只跟容器宽度有关，与条目数无关，所以没必要每渲染一次就量一次 */
@@ -2197,8 +2670,18 @@
             }
             if (previewObserver) previewObserver.disconnect();
             if (typeof MutationObserver !== 'function') { injectPreviewButtons(); return; }
-            previewObserver = new MutationObserver(() => injectPreviewButtons());
-            previewObserver.observe(list, { childList: true });
+            /* subtree:true 是必需的：条目正文框不是随列表一起渲染的，酒馆是在「展开条目」时才把
+               那一块 DOM 建出来（收起状态下行里只有备注框）。只盯 childList 的话，展开时不会回调，
+               正文框就永远拿不到 readonly。这里用 rAF 合帧，一次重绘/一次展开只跑一次。 */
+            let scheduled = false;
+            previewObserver = new MutationObserver(() => {
+                if (scheduled) return;
+                scheduled = true;
+                const run = () => { scheduled = false; injectPreviewButtons(); };
+                if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+                else setTimeout(run, 16);
+            });
+            previewObserver.observe(list, { childList: true, subtree: true });
             injectPreviewButtons();
         };
         attach(10);
@@ -2735,7 +3218,7 @@
         notes.forEach((note) => {
             const entry = note && data.entries[String(note.uid)];
             if (!entry || !note.before || typeof note.before !== 'object') { result.skipped += 1; return; }
-            REPLACE_FIELDS.forEach((field) => {
+            Array.from(new Set(REPLACE_FIELDS.concat(Object.keys(UNDO_FIELD_KEYS)))).forEach((field) => {
                 if (!Object.prototype.hasOwnProperty.call(note.before, field)) return;
                 const value = note.before[field];
                 entry[field] = Array.isArray(value) ? value.slice() : value;
@@ -2752,7 +3235,7 @@
             const entry = data.entries[item.uid];
             if (!entry) return;
             Object.keys(item.before || {}).forEach((field) => {
-                const mapKey = REPLACE_ORIGINAL_KEY[field];
+                const mapKey = REPLACE_ORIGINAL_KEY[field] || UNDO_FIELD_KEYS[field];
                 if (mapKey) mod.setWIOriginalDataValue(data, item.uid, mapKey, entry[field]);
             });
         });
@@ -2816,14 +3299,14 @@
             await mod.saveWorldInfo(book, data, true);
             if (typeof mod.reloadEditor === 'function') mod.reloadEditor(book);
             pushHistory({
-                at: Date.now(), act: 'undo-replace', from: book, to: book,
+                at: Date.now(), act: record.act === 'edit' ? 'undo-edit' : 'undo-replace', from: book, to: book,
                 count: res.restored,
                 find: String(record.find || '').slice(0, 60),
                 repl: String(record.repl || '').slice(0, 60),
                 names: notes.map((n) => String(n && n.name || '')).filter(Boolean).slice(0, 5),
             });
             restoreEntryUi(snap);
-            toast('info', '已撤销替换：写回 ' + res.restored + ' 条'
+            toast('info', (record.act === 'edit' ? '已撤销正文编辑：写回 ' : '已撤销替换：写回 ') + res.restored + ' 条'
                 + (res.skipped ? '，' + res.skipped + ' 条已不存在' : ''));
             return true;
         } catch (err) {
@@ -3345,7 +3828,7 @@
         const limits = config;
         const report = {
             comma: [], dup: [], longKey: [], noKey: [], onlySecondary: [],
-            noBody: [], long: [], zero: [], depth: [],
+            noBody: [], long: [], zero: [],
             sameName: [], recOff: [], total: 0, ignored: 0,
         };
         if (!data || !data.entries) return report;
@@ -3393,8 +3876,8 @@
             if (!String(entry.content || '').trim()) report.noBody.push({ uid, name });
             /* 正文长短本来就有长有短，master 明确说不用提醒，这里不再收集 */
             if (Number(entry.probability) <= 0) report.zero.push({ uid, name });
-            /* 位置 4 = at Depth：深度为空或 0 时注入位置其实没意义 */
-            if (Number(entry.position) === 4 && !(Number(entry.depth) > 0)) report.depth.push({ uid, name });
+            /* 不检查 depth：@D 的深度 0 是合法值（ST 直接用 entry.depth，0 照用），
+               而没填时宿主会走 DEFAULT_DEPTH=4，都不是"永不触发"的问题，报了只会误伤。 */
             if (!entry.excludeRecursion && !entry.preventRecursion) report.recOff.push({ uid, name });
             const list = byName.get(name) || [];
             list.push(uid);
@@ -3550,7 +4033,6 @@
             + '要激活请把触发词填进主关键词；',
             '· 正文为空；',
             '· 触发概率为 0；',
-            '· 位置是 at Depth 但深度没填；',
             '· 备注名重复；',
             '· 「不可递归 / 防止进一步递归」都没开 —— 只是提示，触发器本来就该关着。',
             '点分类展开，点条目名就地看摘录，点「全文」打开只读预览，点「忽略」以后不再提这一条。',
@@ -3573,7 +4055,6 @@
             { key: 'onlySecondary', label: '只填了可选过滤器、主关键词为空（永不触发）', fix: false },
             { key: 'noBody', label: '正文为空', fix: false },
             { key: 'zero', label: '触发概率为 0', fix: false },
-            { key: 'depth', label: '位置是 at Depth 但深度没填', fix: false },
             { key: 'sameName', label: '备注名重复', fix: false },
             { key: 'recOff', label: '「不可递归 / 防止进一步递归」都没开（仅提示）', fix: false, info: true },
         ];
@@ -3761,8 +4242,30 @@
         mkTool('条目体检 BETA', 'health-open', openHealthCheck, checkGroup);
         mkTool('操作历史', 'history-open', openHistoryPicker, checkGroup);
 
+        /* 编辑保护是独立的一类，不和筛选混在一行：单独一个小框 */
+        const lockGroup = el('div', 'wbm-tool-group');
+        lockGroup.appendChild(el('span', 'wbm-favbar-label', '编辑保护'));
+        const lockChip = el('button', 'menu_button wbm-chip wbm-batch-btn' + (clickLockOn() ? ' on' : ''), lockChipLabel());
+        lockChip.type = 'button';
+        lockChip.dataset.role = 'entry-clicklock';
+        lockChip.title = clickLockOn()
+            ? '单击编辑：已锁定 —— 条目里想改就双击那个字段；复选框与下拉双击才生效'
+            : '单击编辑：已启用 —— 条目内容恢复成点一下就改';
+        lockChip.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const next = !clickLockOn();
+            setClickLock(next);
+            lockEntryContents();
+            toast('info', next
+                ? '单击编辑已锁定：字段双击才改，改完按「保存」；复选框与下拉双击即生效'
+                : '单击编辑已启用：条目内容恢复成点一下就改');
+        });
+        lockGroup.appendChild(lockChip);
+
         bar.appendChild(dataGroup);
         bar.appendChild(checkGroup);
+        bar.appendChild(lockGroup);
         entriesList.parentNode.insertBefore(bar, entriesList);
         if (!entriesList.parentNode.querySelector('.wbm-entry-favbar')) {
             entriesList.parentNode.insertBefore(buildEntryFavBar(), entriesList);
