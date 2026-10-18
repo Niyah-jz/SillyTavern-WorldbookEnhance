@@ -262,7 +262,9 @@
     inset: 0;
     z-index: 2147483000;
     display: flex;
-    align-items: flex-end;
+    /* 垂直居中（原来是 flex-end 贴底）：手机键盘弹起时，贴底的窗口会被输入法整块盖住；
+       居中的话窗口主体落在屏幕中段，输入框和列表都还在可视范围里。 */
+    align-items: center;
     justify-content: center;
     background: rgba(0, 0, 0, .6);
     animation: wbm-mask-in .14s ease-out both;
@@ -274,14 +276,15 @@
     flex-direction: column;
     width: 100%;
     max-width: 760px;
-    max-height: 86vh;
-    margin: 0 8px 8px;
+    /* dvh 随键盘变化，键盘弹起时窗口自己变矮；720px 是桌面上的上限，免得窗口过大 */
+    max-height: min(82dvh, 720px);
+    margin: 8px;
     border-radius: 16px;
     border: 1px solid var(--SmartThemeBorderColor, #444);
     background: var(--SmartThemeBlurTintColor, #1c1c26);
     /* 顶沿一道极淡高光，面板才不像一块贴上去的灰板 */
     box-shadow: 0 -2px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .07);
-    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
     overflow: hidden;
     animation: wbm-sheet-in .18s cubic-bezier(.2, .8, .2, 1) both;
 }
