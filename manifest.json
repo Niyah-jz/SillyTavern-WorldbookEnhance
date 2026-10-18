@@ -3,9 +3,9 @@
     "loading_order": 1000,
     "requires": [],
     "optional": [],
-    "js": "index.js?ver=1.0.4",
-    "css": "style.css?ver=1.0.4",
+    "js": "index.js?ver=1.0.4.1",
+    "css": "style.css?ver=1.0.4.1",
     "author": "niyah_jz",
-    "version": "1.0.4",
+    "version": "1.0.4.1",
     "homePage": "https://github.com/Niyah-jz/SillyTavern-WorldbookEnhance"
 }
