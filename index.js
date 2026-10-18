@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    const VERSION = '2.11.5';
+    const VERSION = '1.0';
     const ROOT_ID = 'wbm-list';
     const COLLAPSED_COUNT = 5;
 
