@@ -22,11 +22,18 @@
 (function () {
     'use strict';
 
-    const VERSION = '1.0.3';
+    const VERSION = '1.0.4';
+    /* 构建标记：版本号不随小修变化（都写 1.0.3），只看版本号分不出新旧，
+       所以另外标一个构建号，控制台里能直接看出页面跑的是哪一份。
+       发布时与 manifest 里 js/css 的 ?ver 保持一致（构建脚本会校验）。 */
+    const BUILD = '1.0.4';
     const ROOT_ID = 'wbm-list';
     const COLLAPSED_COUNT = 5;
 
-    if (window.__worldbookEnhance === VERSION) return;
+    if (window.__worldbookEnhance === VERSION) {
+        console.warn('[wbm] 已有一份 v' + VERSION + ' 在跑，这一份被跳过（多半是同目录里留了旧副本）：build=' + BUILD);
+        return;
+    }
     window.__worldbookEnhance = VERSION;
 
     const state = {
@@ -2246,23 +2253,6 @@
         syncLockChip();
     }
 
-    /* 取消/保存统一放在「内容」标题那一行的空位上（master 定的位置），
-       一个条目只有一条动作条，谁在编辑就作用于谁；展开状态下才有这一行。 */
-    function contentHeadingAnchor(row) {
-        const marks = row.querySelectorAll('.mdhotkey_location, [data-i18n="Content"]');
-        for (let i = 0; i < marks.length; i++) {
-            const mark = marks[i];
-            const text = String(mark.textContent || '').trim();
-            if (text !== 'Content' && text !== '内容') continue;
-            /* 酒馆同时在隐藏块里留了一份英文标签，跳掉看不见的那个 */
-            if (mark.offsetParent === null) continue;
-            const holder = mark.parentElement;
-            if (holder && holder !== row) return holder;
-        }
-        const max = row.querySelector('.editor_maximize');
-        return max && max.parentElement ? max.parentElement : null;
-    }
-
     /* 动作条只作用于"到底哪一个控件在被编辑"：按元素身份取，不按 name 去找。
        关键词（key）与可选过滤器（keysecondary）各有两个同名控件——标签式 select 与纯文本
        textarea，按 name 找会拿到那个看不见的，于是取消/保存落空、亮着的框保持解锁。 */
@@ -2287,13 +2277,11 @@
         save.title = '保存这一处改动（Ctrl+Enter）';
         bar.appendChild(cancel);
         bar.appendChild(save);
-        const anchor = contentHeadingAnchor(row);
-        if (anchor && anchor.parentElement) {
-            anchor.insertAdjacentElement('afterend', bar);
-        } else {
-            const row2 = row.querySelector('.world_entry_thin_controls');
-            if (row2) row2.appendChild(bar); else row.appendChild(bar);
-        }
+        /* 位置固定一处（master 定的）：thin 控件行（展开箭头＋启用开关那一行）的末尾，
+           视觉上就落在触发概率右边、收藏左边。折叠与展开都在同一处，
+           因此不会再有「先折叠双击留下一个位置、之后永远钉在那儿」的问题。 */
+        const host = row.querySelector('.world_entry_thin_controls');
+        if (host) host.appendChild(bar); else row.appendChild(bar);
         bar.addEventListener('click', (event) => {
             const btn = event.target instanceof Element ? event.target.closest('button') : null;
             if (!btn) return;
@@ -2345,8 +2333,10 @@
         if (!node || node.classList.contains('wbm-field-editing')) return;
         const row = node.closest('.world_entry');
         if (!row) return;
-        /* 同一时间只允许一个字段处于编辑态，旧的先还原 */
-        row.querySelectorAll('.wbm-field-editing').forEach((other) => {
+        /* 同一时间只允许一处处于编辑态——范围是整张条目列表，不只这一行（master 定的）：
+           点了别的条目就先把上一条还原掉，否则会同时冒出好几组「取消 / 保存」。 */
+        const list = document.querySelector('#world_popup_entries_list') || row;
+        Array.prototype.slice.call(list.querySelectorAll('.wbm-field-editing')).forEach((other) => {
             if (other !== node) cancelField(other);
         });
         node.dataset.wbmBefore = node.value == null ? '' : String(node.value);
@@ -4551,7 +4541,7 @@
         host.setAttribute('data-wbm-ready', '1');
         if (!window.__wbmLogged) {
             window.__wbmLogged = 1;
-            console.info('[wbm] mounted v' + VERSION + ' into', mount.className || mount.id, 'rows=' + actives.length);
+            console.info('[wbm] mounted v' + VERSION + ' build=' + BUILD + ' into', mount.className || mount.id, 'rows=' + actives.length);
         }
 
         applyActFilter();
