@@ -1181,3 +1181,90 @@ html.wbm-quiet-resize {
     line-height: 1.55;
 }
 .wbm-health-info-line { opacity: .85; }
+
+/* ---- 正文防误触：默认只读，双击进编辑，标题旁出「取消 / 保存」 ---- */
+.wbm-edit-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+.wbm-edit-actions[hidden] { display: none !important; }
+.wbm-edit-btn {
+    font: inherit;
+    font-size: 12px;
+    line-height: 1;
+    padding: 4px 11px;
+    border-radius: 999px;
+    cursor: pointer;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .28));
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202020) 88%, transparent);
+    color: var(--SmartThemeBodyColor, #ddd);
+    transition: filter .12s ease, background .12s ease;
+}
+.wbm-edit-btn:hover { filter: brightness(1.18); }
+.wbm-edit-btn:active { filter: brightness(.92); }
+.wbm-edit-cancel { opacity: .85; }
+/* 确认键跟随酒馆主题：底色/描边取主题强调色（--SmartThemeQuoteColor），文字取正文色 */
+.wbm-edit-save {
+    font-weight: 700;
+    border-color: var(--SmartThemeQuoteColor, rgba(140, 190, 255, .85));
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8cbeff) 22%, transparent);
+    color: var(--SmartThemeBodyColor, #eee);
+}
+.wbm-edit-save:hover {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8cbeff) 38%, transparent);
+    filter: none;
+}
+/* 字段级「取消 / 保存」：贴着被解锁的那个字段放 */
+.wbm-field-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+.wbm-field-bar[hidden] { display: none !important; }
+/* 正在编辑的那个字段加一圈强调色，别让人找不到 */
+.wbm-field-editing {
+    outline: 1px solid var(--SmartThemeQuoteColor, rgba(140, 190, 255, .8));
+    outline-offset: 1px;
+}
+textarea.wbm-content-locked { cursor: pointer; }
+textarea.wbm-content-editing {
+    outline: 1px solid var(--SmartThemeQuoteColor, rgba(120, 190, 255, .8));
+    outline-offset: 1px;
+}
+
+/* ---- 条目防误触锁：下拉/复选/关键词点不动，双击条目进编辑态 ---- */
+.wbm-inert {
+    pointer-events: none !important;
+}
+/* 被 select2 包一层的下拉（关键词、触发策略等）：锁住时连它那一层也点不动 */
+.world_entry[data-wbm-locked="1"] .select2-container,
+.world_entry[data-wbm-locked="1"] .select2-selection {
+    pointer-events: none !important;
+}
+.wbm-field-locked {
+    cursor: pointer;
+}
+/* 编辑态的条目：整块加一圈淡淡的强调色，让人一眼知道"现在这条可以改" */
+.world_entry[data-wbm-editing="1"] {
+    outline: 1px solid var(--SmartThemeQuoteColor, rgba(120, 190, 255, .55));
+    outline-offset: -1px;
+}
+.wbm-edit-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 6px;
+}
+.wbm-edit-bar[hidden] { display: none !important; }
+/* 顶栏上的开关图标 */
+#wbm-lock-toggle {
+    cursor: pointer;
+}
+#wbm-lock-toggle.wbm-lock-on {
+    color: var(--SmartThemeQuoteColor, #7cc0ff);
+}
