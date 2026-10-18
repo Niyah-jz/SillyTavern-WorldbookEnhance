@@ -22,11 +22,11 @@
 (function () {
     'use strict';
 
-    const VERSION = '1.0.4';
+    const VERSION = '1.0.4.1';
     /* 构建标记：版本号不随小修变化（都写 1.0.3），只看版本号分不出新旧，
        所以另外标一个构建号，控制台里能直接看出页面跑的是哪一份。
        发布时与 manifest 里 js/css 的 ?ver 保持一致（构建脚本会校验）。 */
-    const BUILD = '1.0.4';
+    const BUILD = '1.0.4.1';
     const ROOT_ID = 'wbm-list';
     const COLLAPSED_COUNT = 5;
 
@@ -2151,6 +2151,10 @@
         order: 'order',
         probability: 'probability',
         automationId: 'automationId',
+        sticky: 'sticky',
+        cooldown: 'cooldown',
+        delay: 'delay',
+        groupWeight: 'groupWeight',
     };
     /* 这几个字段在酒馆数据里还有一份旧格式镜像，写回时要一起同步（撤销用） */
     const UNDO_FIELD_KEYS = {
@@ -2158,6 +2162,10 @@
         order: 'insertion_order',
         probability: 'extensions.probability',
         automationId: 'extensions.automation_id',
+        sticky: 'extensions.sticky',
+        cooldown: 'extensions.cooldown',
+        delay: 'extensions.delay',
+        groupWeight: 'extensions.group_weight',
     };
 
     function clickLockOn() {
@@ -2193,6 +2201,32 @@
     function entryControls(row) {
         return Array.prototype.slice.call(row.querySelectorAll('input, textarea, select'))
             .filter((node) => !node.closest(LOCK_EXCLUDE_SEL));
+    }
+
+    /* 酒馆里有些字段的标题写在控件外面，用 HTML 的 for 关联：
+       <small for="sticky">黏性</small>、<small for="characterFilter">绑定到角色或标签</small>、
+       <label for="order">顺序：</label>。点这种标题在原生语义里等于点控件——移动端点
+       「绑定到角色或标签」的标题就会直接弹出原生多选面板，绕过我们的单击拦截。
+       所以这里按 for 找回受控控件，单击按控件同等对待。 */
+    function refControlOf(node, row) {
+        if (!node || !node.closest) return null;
+        const holder = node.closest('[for]');
+        if (!holder) return null;
+        const target = String(holder.getAttribute('for') || '').trim();
+        if (!target) return null;
+        const scope = row || node.closest('.world_entry') || document.querySelector('#world_popup_entries_list');
+        if (!scope) return null;
+        let control = null;
+        try {
+            const byId = document.getElementById(target);
+            if (byId && scope.contains(byId) && byId.matches('input, textarea, select')) control = byId;
+        } catch (err) { control = null; }
+        if (!control) {
+            try { control = scope.querySelector('[name="' + target.replace(/["\\]/g, '\\$&') + '"]'); } catch (err) { control = null; }
+        }
+        if (!control || !control.matches('input, textarea, select')) return null;
+        if (control.closest(LOCK_EXCLUDE_SEL)) return null;
+        return control;
     }
 
     function isTextField(node) {
@@ -2496,6 +2530,15 @@
                 if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
                 return;
             }
+            /* 写在控件外面的标题（<small for="sticky">、<label for="order">）：点它等于点控件，
+               移动端点「绑定到角色或标签」的标题会弹出原生多选面板，一并拦住 */
+            const refNode = refControlOf(node);
+            if (refNode && refNode !== node && !refNode.classList.contains('wbm-field-editing')) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+                return;
+            }
             if (!node.matches('input, textarea, select')) return;
             /* 带自动补全的文本框（自动化 ID 这类）：锁定态单击会聚焦并弹出候选，
                点候选等于直接改值，所以连单击一起吞掉，只留双击。 */
@@ -2538,6 +2581,8 @@
                 const lab = node.closest('label');
                 if (lab) control = lab.querySelector('input[type="checkbox"], input[type="radio"], select');
             }
+            /* 标题写在控件外面（<small for="sticky">黏性</small>）：双击标题也要能进编辑 */
+            if (!control) control = refControlOf(node);
             if (!control) return;
             event.preventDefault();
             event.stopPropagation();
