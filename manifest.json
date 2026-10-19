@@ -1,11 +1,11 @@
 {
-    "display_name": "世界书增强",
+    "display_name": "双端酒馆原生功能优化",
     "loading_order": 1000,
     "requires": [],
     "optional": [],
-    "js": "index.js?ver=1.0.4.4",
-    "css": "style.css?ver=1.0.4.4",
+    "js": "index.js?ver=1.1.0.35",
+    "css": "style.css?ver=1.1.0.35",
     "author": "niyah_jz",
-    "version": "1.0.4.4",
+    "version": "1.1.0",
     "homePage": "https://github.com/Niyah-jz/SillyTavern-WorldbookEnhance"
 }
