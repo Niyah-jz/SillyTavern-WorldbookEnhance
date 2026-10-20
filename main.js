@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    const VERSION = (window.__wbmBoot && window.__wbmBoot.version) || '1.2.1';
+    const VERSION = (window.__wbmBoot && window.__wbmBoot.version) || '1.2.2';
     /* 构建标记：版本号不随小修变化（都写 1.0.3），只看版本号分不出新旧，
        所以另外标一个构建号，控制台里能直接看出页面跑的是哪一份。
        发布时与 manifest 里 js/css 的 ?ver 保持一致（构建脚本会校验）。 */
@@ -7666,10 +7666,12 @@ function updateEditorButton() {
         return ta ? ta.closest('.mes') : null;
     }
 
+    /* 只点顶部那排的原生按钮。cloneNode 出来的克隆体不能自己承接「确认」（见下），
+       而且 querySelector 在文档顺序上虽然先命中原生那排，但显式限定更稳。 */
     function clickEditButton(sel) {
         const mes = currentEditMes();
         if (!mes) return;
-        const btn = mes.querySelector(sel);
+        const btn = mes.querySelector('.mes_edit_buttons ' + sel) || mes.querySelector(sel);
         if (btn) btn.click();
     }
 
@@ -7710,6 +7712,29 @@ function updateEditorButton() {
     }
 
     function bindMsgEditRow() {
+        /* 克隆出来的「确认」不能让它自己走酒馆的处理器：酒馆按点击到的那个按钮往上找
+           .mes_block（script.js:8081 updateMessage 里是 div.closest('.mes_block')），
+           我们的那排挂在 .mes 下，closest 拿到 null → 抛异常 → 消息正文被清空、编辑态卡死
+           （2026-10-20 TT 实测的「点绿色确认吞住」就是这个）。所以捕获阶段把它转交给原生那排。 */
+        const CLONED_EDIT_BTNS = '.mes_edit_done, .mes_edit_cancel, .mes_edit_copy, .mes_edit_delete,'
+            + ' .mes_edit_up, .mes_edit_down, .mes_edit_add_reasoning';
+        document.addEventListener('click', (event) => {
+            const t = event.target;
+            if (!t || !t.closest) return;
+            if (!t.closest('#wbm-bottom-editrow')) return;
+            const clone = t.closest(CLONED_EDIT_BTNS);
+            if (!clone) return;
+            /* 一个都不自己处理：统一转交给顶部那排的原生按钮。
+               酒馆这些处理器都要往上找 .mes_block（updateMessage 里是 div.closest('.mes_block')），
+               而克隆的这排挂在 .mes 下，closest 拿到 null 就抛异常 —— 正文被清空、编辑态卡死。 */
+            event.preventDefault();
+            event.stopPropagation();
+            const mes = clone.closest('.mes');
+            if (!mes) return;
+            const key = Array.from(clone.classList).find((c) => c.indexOf('mes_edit') === 0);
+            const native = key ? mes.querySelector('.mes_edit_buttons .' + key) : null;
+            if (native) native.click();
+        }, true);
         /* 编辑框拿到焦点那一刻（双击进编辑、点铅笔进编辑都会经过这里）挂上右下角那排 */
         document.addEventListener('focusin', (event) => {
             const t = event.target;
