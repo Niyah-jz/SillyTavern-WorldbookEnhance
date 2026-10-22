@@ -808,6 +808,18 @@
     width: 100%;
     height: 30px;
     font-size: 13px;
+    /* 跟随主题：原来是不带背景/颜色的裸 input，截图里就是一格刺眼的白底 */
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .9)) 92%, transparent);
+    color: var(--SmartThemeBodyColor, inherit);
+    font-family: inherit;
+}
+
+.wbm-name-input-inline:focus {
+    outline: none;
+    border-color: var(--SmartThemeEmColor, rgba(156, 123, 214, .8));
 }
 
 /* 分类面板里显示这套预设属于哪一组（只做提示，不给操作） */
@@ -1937,6 +1949,15 @@ textarea.wbm-content-editing {
     display: none !important;
 }
 
+/* 页码被我们接管后钉在气泡正中下方（不再是 .swipeRightBlock 的孩子），上面那条选不到它，
+   它会和右下角那排按钮同一水平线、手机上图标直接叠在一起。编辑期间这条消息的页码一并让位；
+   .wbm-editing 是老 WebView 不认 :has() 时的兜底（由 main.js 的 syncBottomRow 加/删）。 */
+.mes:has(> #wbm-bottom-editrow) > .swipes-counter,
+.mes:has(> #wbm-bottom-editrow) .swipes-counter,
+.mes.wbm-editing .swipes-counter {
+    display: none !important;
+}
+
 /* ================= 扩展设置抽屉 ================= */
 
 /* 分组小标题：用主题引色，换主题时跟着变 */
@@ -2182,7 +2203,6 @@ textarea.wbm-content-editing {
 /* 够宽（600px 以上：横屏手机、平板、电脑）：搜索区挤回一行，把高度还给条目列表。
    手机竖屏（390 那档）不命中，那边仍然是"搜索框独占一排 + 键与排序一排"。 */
 @media (min-width: 600px) {
-    .wbm-scope-row { flex-wrap: nowrap; }
     .wbm-scope-row #world_info_search {
         flex: 1 1 6em;
         min-width: 4em;
@@ -2417,4 +2437,1480 @@ body.wbm-swipe-on #chat .mes .swipes-counter {
     height: 44px;
     margin: -10px -8px -10px 0;
     cursor: pointer;
+}
+
+/* ---------------- ② 对话补全预设：搜索按钮 ---------------- */
+#wbm-talk-preset-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    padding: 0 10px;
+    margin-left: 4px;
+    font-size: 13px;
+}
+#wbm-talk-preset-btn .wbm-talk-preset-btn-text { white-space: nowrap; }
+.wbm-talk-preset-row.active .wbm-picker-name { color: var(--SmartThemeQuoteColor, inherit); }
+.wbm-talk-preset-row .wbm-preset-tools { margin-left: auto; }
+
+/* 预设名太长时「分组 / 删除」不能被挤到第二行（master 2026-10-21 手机端报的）：
+   名字这一格吃掉余量并自己省略号，右侧工具固定宽度、永不换行。 */
+.wbm-talk-preset-row {
+    flex-wrap: nowrap !important;
+}
+
+.wbm-talk-preset-row .wbm-picker-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wbm-talk-preset-row .wbm-preset-tools {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 10px;
+}
+
+.wbm-talk-preset-row .wbm-preset-tool {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.wbm-talk-preset-row .wbm-picker-count {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* 分组标题兼折叠开关：点一下展开/收起，右侧是本组条数 */
+.wbm-picker-group-label.wbm-talk-group-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    min-height: 28px;
+}
+
+.wbm-picker-group-label.wbm-talk-group-toggle:hover {
+    color: var(--SmartThemeEmColor, inherit);
+}
+
+.wbm-picker-group-label.wbm-talk-group-toggle > i {
+    font-size: 11px;
+    opacity: .75;
+}
+
+.wbm-picker-group-label.wbm-talk-group-toggle > .wbm-talk-group-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wbm-picker-group-label.wbm-talk-group-toggle > .wbm-talk-group-count {
+    margin-left: auto;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    opacity: .55;
+}
+
+.wbm-talk-group-body[hidden] {
+    display: none !important;
+}
+
+/* 批量条：已选 N 个 | 全选 | 清空 | 分组 | 删除 | 退出
+   手机上也要能一行放下，所以字小一号、间距收紧，绝不换行。 */
+.wbm-talk-batchbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    min-height: 32px;
+    padding: 2px 12px 6px;
+    white-space: nowrap;
+}
+
+.wbm-talk-batchbar[hidden] {
+    display: none !important;
+}
+
+.wbm-talk-batch-count {
+    flex: 0 0 auto;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    opacity: .7;
+    margin-right: auto;
+}
+
+.wbm-talk-batchbar .wbm-preset-tool {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    font-size: 12px;
+    padding: 4px 10px;
+}
+
+.wbm-talk-batchbar .wbm-talk-batch-exit {
+    opacity: .8;
+}
+
+.wbm-talk-batch-grouprow[hidden] {
+    display: none !important;
+}
+
+@media (max-width: 480px) {
+    .wbm-talk-batchbar {
+        gap: 5px;
+        padding: 2px 8px 6px;
+    }
+
+    .wbm-talk-batch-count {
+        font-size: 10px;
+    }
+
+    .wbm-talk-batchbar .wbm-preset-tool {
+        font-size: 11px;
+        padding: 4px 6px;
+    }
+}
+
+/* 行内改名/分组那一排：输入框占余量，「确定 / 取消」不压缩。
+   原来两个键用 .wbm-picker-action（flex:1 1 0 + min-width:0），被 width:100% 的输入框挤成
+   14px 宽，「确定」「取消」两个字竖着排（master 2026-10-21 截图报的就是这个）。 */
+.wbm-picker-row .wbm-name-input-inline {
+    flex: 1 1 6em;
+    width: auto;
+    min-width: 0;
+}
+
+.wbm-picker-row .wbm-name-input-inline ~ .wbm-picker-action {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 56px;
+    padding: 0 12px;
+    white-space: nowrap;
+}
+
+/* 手机：行内改名那一排仍是一行，但把名字截短、输入框保底留够宽度。
+   一行塞四个东西时输入框原来只剩 49px，打字看不到自己输入了什么。 */
+@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {
+    .wbm-picker-row .wbm-name-input-inline {
+        flex: 1 1 7em;
+        min-width: 7em;
+    }
+
+    .wbm-picker-row .wbm-name-input-inline ~ .wbm-picker-name,
+    .wbm-picker-row .wbm-picker-name:has(+ .wbm-name-input-inline) {
+        flex: 0 1 auto;
+        max-width: 84px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .wbm-picker-row .wbm-name-input-inline ~ .wbm-picker-action {
+        min-width: 52px;
+        padding: 0 10px;
+    }
+}
+
+/* 两级插入窗口：步骤提示（第 1 步 / 第 2 步），以及隐藏的按钮不占位 */
+.wbm-picker-group-label.wbm-step-marker {
+    opacity: .6;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: .02em;
+}
+
+.wbm-picker-actions > [hidden] {
+    display: none !important;
+}
+
+/* 关键：提示词管理器整块是 #ai_response_configuration（flex 行）里的 flex 子项，
+   默认 min-width:auto 会让它的 min-content 把抽屉撑到 700px 宽 —— 行尾的原生按钮就被
+   画到抽屉外面（压在对话区上），点击落到对话区 → 表现为「点不到开关/找不到排序键」。
+   这里把 min-width 链条全部放开，行内元素自己省略，宽度跟随抽屉。 */
+#completion_prompt_manager {
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: 100%;
+}
+#completion_prompt_manager .range-block,
+#completion_prompt_manager_list,
+#completion_prompt_manager_list li,
+li.completion_prompt_manager_prompt {
+    min-width: 0 !important;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+li.completion_prompt_manager_prompt {
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {
+    min-width: 0 !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.completion_prompt_manager_footer {
+    flex-wrap: wrap !important;
+    min-width: 0 !important;
+}
+
+/* 方案 A：每行一个「↓」，点它就是「把当前选中的那条插到这行之后」 */
+.wbm-prompt-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 6px;
+    min-width: 0;
+}
+
+.wbm-prompt-bar-hint {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12px;
+    line-height: 1.3;
+    opacity: .7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 行内「↓」：默认半透明，悬停才亮，避免抢走原生按钮的注意力 */
+.prompt_manager_prompt_controls .wbm-pm-insert {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 4px;
+    margin-right: 4px;
+    border-radius: 4px;
+    font-size: 12px;
+    opacity: .45;
+    cursor: pointer;
+}
+
+.prompt_manager_prompt_controls .wbm-pm-insert:hover {
+    opacity: 1;
+    color: var(--SmartThemeEmColor, #9c7bd6);
+}
+
+@media (max-width: 760px), (max-width: 1100px) and (pointer: coarse) {
+    .prompt_manager_prompt_controls .wbm-pm-insert {
+        padding: 8px 10px;
+        font-size: 14px;
+        opacity: .7;
+    }
+
+    .wbm-prompt-bar-hint {
+        font-size: 11px;
+    }
+}
+
+/* 提示词行的「↓」：行尾控件区最前（detach / edit / toggle 之前）。
+   默认半透明，行悬停时才醒目；行尾那几个是酒馆原生键，我们的键排在最前不贴边。 */
+#completion_prompt_manager_list .wbm-pm-insert {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin: 0 4px 0 0;
+    border-radius: 5px;
+    font-size: 11px;
+    opacity: .35;
+    cursor: pointer;
+    transition: opacity .12s ease, background-color .12s ease, color .12s ease;
+}
+
+#completion_prompt_manager_list li:hover .wbm-pm-insert {
+    opacity: .9;
+}
+
+#completion_prompt_manager_list .wbm-pm-insert:hover {
+    opacity: 1;
+    color: var(--SmartThemeEmColor, #9c7bd6);
+    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 20%, transparent);
+}
+
+/* 没选中移动对象时：所有 ↓ 变灰、不可点 */
+/* 没选移动对象时：只压暗，不能变「点不动的死键」——点不动等于没反馈，
+   master 会判成「下箭头无法点击」。点它会 toast 提示并高亮底部下拉。 */
+#completion_prompt_manager_list .wbm-pm-insert.wbm-pm-insert-off {
+    opacity: .3;
+    cursor: help;
+}
+
+#completion_prompt_manager_list .wbm-pm-insert.wbm-pm-insert-off:hover {
+    opacity: .75;
+    color: var(--SmartThemeBodyColor, inherit);
+    background-color: transparent;
+}
+
+/* 底部下拉被提醒时闪一下，告诉用户「要在这里选条目」 */
+#completion_prompt_manager_footer_append_prompt.wbm-pm-attn {
+    outline: 2px solid var(--SmartThemeEmColor, #9c7bd6);
+    outline-offset: 1px;
+    animation: wbm-pm-attn 1.2s ease-out;
+}
+
+@keyframes wbm-pm-attn {
+    0% { background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 45%, transparent); }
+    100% { background-color: transparent; }
+}
+
+/* 拖拽把手：桌面端只有 ☰ 能拖，给它留够命中区并给出抓取手势 */
+#completion_prompt_manager_list li[data-pm-identifier] .drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    margin-right: 2px;
+    cursor: grab;
+    user-select: none;
+}
+
+#completion_prompt_manager_list li[data-pm-identifier] .drag-handle:active {
+    cursor: grabbing;
+}
+
+/* 正在移动的那一条：左侧竖色条 + 淡底，和底部下拉里的名字对得上 */
+/* 移动中的那一行整条变色（master：标识不明显，直接让整个条目变色、随主题） */
+#completion_prompt_manager_list li.wbm-pm-moving {
+    box-shadow: inset 4px 0 0 var(--SmartThemeEmColor, #9c7bd6);
+    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 26%, transparent) !important;
+    outline: 1px solid color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 55%, transparent);
+    outline-offset: -1px;
+}
+#completion_prompt_manager_list li.wbm-pm-moving .prompt_manager_prompt_name,
+#completion_prompt_manager_list li.wbm-pm-moving .prompt_manager_prompt_name * {
+    color: var(--SmartThemeEmColor, #9c7bd6) !important;
+}
+
+/* 悬停预演：这一行下沿亮一条线，提示落点 */
+#completion_prompt_manager_list li.wbm-pm-hover {
+    box-shadow: inset 0 -2px 0 var(--SmartThemeEmColor, #9c7bd6);
+}
+
+/* 刚移动完成的那一条：闪一下再淡掉 */
+#completion_prompt_manager_list li.wbm-pm-flash {
+    animation: wbm-pm-flash 0.9s ease-out;
+}
+
+@keyframes wbm-pm-flash {
+    0% { background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 38%, transparent); }
+    100% { background-color: transparent; }
+}
+
+@media (max-width: 760px), (max-width: 1100px) and (pointer: coarse) {
+    #completion_prompt_manager_list .wbm-pm-insert {
+        width: 30px;
+        height: 30px;
+        font-size: 13px;
+        opacity: .6;
+    }
+}
+
+/* ---------------- ③ 提示词插入到指定位置 ---------------- */
+.wbm-prompt-insert-btn { flex: 0 0 auto; }
+.wbm-prompt-insert-btn::after { content: ''; }
+
+/* ---------------- ④ 提示词编辑弹窗：保存键常驻 ---------------- */
+.wbm-pm-sticky {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 4px;
+    margin-top: 6px;
+    background: var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .96));
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .16));
+    box-shadow: 0 -6px 12px -8px var(--SmartThemeShadowColor, rgba(0, 0, 0, .6));
+}
+
+/* ================= 人设管理：分组 + 手机折叠 ================= */
+.wbm-persona-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.wbm-persona-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.wbm-persona-hint {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    opacity: .6;
+    margin-left: auto;
+}
+
+.wbm-persona-tag {
+    display: inline-block;
+    margin-top: 2px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    font-size: 10px;
+    line-height: 14px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: .8;
+}
+
+.wbm-persona-collapse {
+    display: inline-flex;
+    width: 100%;
+    justify-content: center;
+    margin-bottom: 8px;
+}
+
+.persona_management_left_column.wbm-collapsed {
+    flex: 0 0 auto;
+}
+
+/* 手机收起人设列表时，我们那排筛选胶囊与「分组…」要留着——
+   否则想按组筛选、想打开分组浮层，连入口都被一起收走了（master 2026-10-21 报「点开分组浮层就卡住」，手机端连点开都做不到）。 */
+.persona_management_left_column.wbm-collapsed > *:not(#wbm-persona-collapse):not(#wbm-persona-bar) {
+    display: none !important;
+}
+
+.persona_management_left_column.wbm-collapsed > #wbm-persona-bar {
+    display: flex !important;
+}
+
+.wbm-persona-row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+}
+
+.wbm-persona-row .wbm-picker-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+}
+
+.wbm-persona-row .wbm-picker-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---------------- 人设分组浮层（2026-10-21） ---------------- */
+/* 标题行：左边标题、右边「关闭」，任何状态下都能退出 */
+.wbm-picker-titlerow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 2px 12px 6px;
+}
+
+.wbm-picker-titlerow .wbm-picker-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wbm-picker-close {
+    flex: 0 0 auto;
+    padding: 5px 14px;
+    min-height: 32px;
+    border-radius: 999px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));
+    background: transparent;
+    color: var(--SmartThemeBodyColor, inherit);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.2;
+    cursor: pointer;
+}
+
+.wbm-picker-close:hover {
+    border-color: var(--SmartThemeEmColor, rgba(156, 123, 214, .8));
+}
+
+.wbm-persona-row .wbm-picker-line { cursor: pointer; }
+
+/* 组名输入行：输入框占余量、两个键不压缩（原来输入框 width:100% 把「确定/取消」挤成竖排） */
+.wbm-preset-saverow .wbm-name-input-inline {
+    flex: 1 1 8em;
+    width: auto;
+    min-width: 0;
+}
+
+.wbm-preset-saverow .wbm-preset-tool {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 5px 14px;
+    min-height: 30px;
+    font-size: 13px;
+}
+
+/* ---- 提示词管理器：把手显示规则（1.3.14，按 TT 酒馆的行为对齐） ----
+   TT 的 promptmanager.css 只在把手真正生效时才显示 ☰；电脑端整行可拖，所以不显示。
+   这里用同样的规则：细指针（鼠标）隐藏装饰性把手，粗指针（触屏）显示并和星号拉开距离。 */
+@media (pointer: fine) {
+    #completion_prompt_manager_list .drag-handle,
+    .completion_prompt_manager_prompt > .drag-handle {
+        display: none !important;
+    }
+}
+
+@media (pointer: coarse) {
+    #completion_prompt_manager_list .drag-handle,
+    .completion_prompt_manager_prompt > .drag-handle {
+        padding: 2px 10px 2px 2px;
+        margin-right: 8px;
+        opacity: 0.8;
+        cursor: grab;
+    }
+
+    #completion_prompt_manager_list .drag-handle:active,
+    .completion_prompt_manager_prompt > .drag-handle:active {
+        cursor: grabbing;
+    }
+}
+
+/* 提示词管理器底部的版本标记：用来确认页面跑的是哪一版（排查缓存用） */
+.wbm-pm-ver {
+    margin-left: auto;
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    opacity: .45;
+    white-space: nowrap;
+}
+/* ================= 排序状态（1.3.18） ================= */
+#completion_prompt_manager_list.wbm-sorting li .prompt_manager_prompt_controls {
+    display: none !important;
+}
+
+#completion_prompt_manager_list.wbm-sorting .drag-handle {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    margin-right: 2px;
+    opacity: .8;
+    cursor: grab;
+    user-select: none;
+}
+
+#completion_prompt_manager_list .wbm-pm-seq {
+    flex: 0 0 auto;
+    min-width: 1.7em;
+    text-align: right;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    opacity: .6;
+    margin-right: 6px;
+}
+
+#completion_prompt_manager_list .wbm-pm-box {
+    flex: 0 0 auto;
+    position: relative;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    border: 2px solid var(--SmartThemeBorderColor, rgba(170, 170, 170, .9));
+    box-sizing: border-box;
+    margin-right: 5px;
+    cursor: pointer;
+}
+
+#completion_prompt_manager_list .wbm-pm-box.on {
+    border-color: var(--SmartThemeQuoteColor, #d4b06a);
+    background: var(--SmartThemeQuoteColor, #d4b06a);
+}
+
+#completion_prompt_manager_list .wbm-pm-box.on::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 5px;
+    height: 9px;
+    border: solid var(--SmartThemeBlurTintColor, #1c1c26);
+    border-width: 0 2px 2px 0;
+    box-sizing: border-box;
+    transform: translate(-50%, -58%) rotate(42deg);
+}
+
+#completion_prompt_manager_list li.wbm-pm-picked {
+    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 18%, transparent) !important;
+}
+
+#completion_prompt_manager_list .wbm-pm-insert.wbm-pm-arrow-off {
+    opacity: .25;
+    cursor: help;
+}
+
+#completion_prompt_manager_list.wbm-sorting li .wbm-pm-insert {
+    width: 22px;
+    height: 22px;
+    margin-right: 6px;
+    opacity: .5;
+}
+
+#completion_prompt_manager_list.wbm-sorting li:hover .wbm-pm-insert {
+    opacity: 1;
+}
+
+.wbm-prompt-sortbtn {
+    flex: 0 0 auto;
+    padding: 4px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.2;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.wbm-prompt-sortbtn:hover {
+    border-color: var(--SmartThemeEmColor, #9c7bd6);
+    color: var(--SmartThemeEmColor, #9c7bd6);
+}
+
+/* ================= 排序态排版（1.3.19） =================
+   排序态只留「序号 · 勾选 · ☰ · ↓ · 名字 · token」，行内一律单行、名字省略。 */
+#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 8px 4px 2px;
+    min-height: 34px;
+    box-sizing: border-box;
+}
+
+#completion_prompt_manager_list.wbm-sorting li .wbm-pm-seq {
+    min-width: 1.5em;
+    margin: 0 2px 0 0;
+    font-size: 11px;
+    line-height: 1;
+}
+
+#completion_prompt_manager_list.wbm-sorting li .wbm-pm-box {
+    width: 16px;
+    height: 16px;
+    margin: 0 4px 0 2px;
+}
+
+#completion_prompt_manager_list.wbm-sorting li .drag-handle {
+    width: 20px;
+    margin: 0 2px 0 0;
+}
+
+#completion_prompt_manager_list.wbm-sorting li .wbm-pm-insert {
+    width: 18px;
+    height: 22px;
+    margin: 0 4px 0 0;
+}
+
+#completion_prompt_manager_list.wbm-sorting li .completion_prompt_manager_prompt_name,
+#completion_prompt_manager_list.wbm-sorting li .prompt_manager_prompt_name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#completion_prompt_manager_list.wbm-sorting li .completion_prompt_manager_prompt_tokens,
+#completion_prompt_manager_list.wbm-sorting li .prompt_manager_prompt_tokens,
+#completion_prompt_manager_list.wbm-sorting li > span:last-child {
+    flex: 0 0 auto;
+    padding-left: 6px;
+    opacity: .45;
+    white-space: nowrap;
+}
+
+/* ================= 排序态视觉顺序（1.3.21） =================
+   宿主把每一行设成 `display: grid; grid-template-columns: 4fr 80px 45px`（css/promptmanager.css:20），
+   ☰ 又是 position:absolute —— 所以我们只写 li{display:flex} 是压不住的（网格优先级更高），
+   表现就是名字换行、星号和 ☰ 叠在一起。这里用同样的 id 链 + !important 才真正接管。 */
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    grid-template-columns: none !important;
+    gap: 4px !important;
+    padding: 5px 8px !important;
+    min-height: 40px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-seq {
+    order: -5;
+    flex: 0 0 auto !important;
+    min-width: 1.4em;
+    margin: 0 !important;
+    text-align: right;
+    font-size: 11px;
+    line-height: 1;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-box {
+    order: -4;
+    flex: 0 0 auto !important;
+    width: 16px !important;
+    height: 16px !important;
+    margin: 0 2px 0 0 !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {
+    order: -3;
+    position: static !important;
+    top: auto !important;
+    height: auto !important;
+    width: 16px !important;
+    min-width: 16px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    line-height: 1;
+    opacity: .75;
+    cursor: grab;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-insert {
+    order: -2;
+    flex: 0 0 auto !important;
+    width: 18px !important;
+    height: 22px !important;
+    margin: 0 2px 0 0 !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .completion_prompt_manager_prompt_name {
+    order: 1;
+    flex: 1 1 auto !important;
+    min-width: 0;
+    display: flex !important;
+    align-items: center;
+    gap: 2px;
+    overflow: hidden;
+    white-space: nowrap !important;
+    line-height: 1.3;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .completion_prompt_manager_prompt_name > a {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > span:not(.drag-handle):not(.wbm-pm-seq):not(.wbm-pm-box):not(.wbm-pm-insert):not(.completion_prompt_manager_prompt_name) {
+    order: 2;
+    flex: 0 0 auto !important;
+}
+
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .prompt_manager_prompt_tokens {
+    order: 3;
+    flex: 0 0 auto !important;
+    padding-left: 6px;
+    opacity: .5;
+}
+
+/* ================= 1.3.22：星号不吃指针、触屏不显示拖拽把手 ================= */
+#completion_prompt_manager_list .completion_prompt_manager_prompt_name .fa-solid.fa-asterisk,
+#completion_prompt_manager_list .completion_prompt_manager_prompt_name .fa-solid.fa-asterisk * {
+    pointer-events: none !important;
+}
+
+@media (pointer: coarse) {
+    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {
+        display: none !important;
+    }
+}
+
+/* 触屏（手机/平板）不提供拖拽：☰ 直接不画。排序用勾选 + ↓。 */
+@media (pointer: coarse) {
+    #completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle,
+    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {
+        display: none !important;
+    }
+}
+
+/* ================= 1.3.24：拖拽整体下线 + 顶部常驻工具条 + 每行 ↑↓ 微调 ================= */
+/* ☰ 不再出现（手机、电脑、排序态都一样） */
+#completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle,
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {
+    display: none !important;
+}
+
+/* 工具条常驻在提示词管理器顶部，滚到列表中间也看得到 */
+#completion_prompt_manager > .wbm-prompt-bar {
+    position: sticky;
+    top: 0;
+    z-index: 7;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 0 0 6px;
+    padding: 7px 4px;
+    background: var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .96));
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .12));
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-bar-hint {
+    flex: 1 1 12em;
+    min-width: 0;
+}
+
+/* 每行 ↑↓：一对小键，紧挨行尾控件区，默认低调、悬停变亮 */
+#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: 6px;
+    flex: 0 0 auto;
+}
+#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > * {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-size: 12px;
+    opacity: .5;
+    cursor: pointer;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+}
+#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > *:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 24%, transparent);
+}
+
+/* 排序态：鼠标移上去时不要丢掉行框（master：「选项高亮时，选项框会消失」） */
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier]:hover {
+    background-color: color-mix(in srgb, var(--SmartThemeBorderColor, #ffffff) 10%, transparent);
+    outline: 1px solid color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 40%, transparent);
+    outline-offset: -1px;
+}
+
+/* 酒馆原生那句「单击滑块以手动输入值。」常驻在 AI 面板顶端，盖在内容上；这里收掉 */
+#left-nav-panel #clickSlidersTips {
+    display: none !important;
+}
+
+/* ================= 1.3.26：↑↓ 收进行尾控件区（不再占第二行）+ 排序态隐藏 ================= */
+#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    margin: 0 4px 0 0;
+    padding: 0;
+    flex: 0 0 auto;
+    line-height: 1;
+}
+#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > * {
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    font-size: 10px;
+    opacity: .55;
+    cursor: pointer;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    margin: 0;
+}
+#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > *:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 22%, transparent);
+}
+
+/* 1.3.33：排序态要显示 ↑↓（顶替 Token 数字），旧的隐藏规则已删除。 */
+
+/* 工具条：没有说明文字，按钮靠右排一行 */
+#completion_prompt_manager > .wbm-prompt-bar {
+    gap: 8px;
+    padding: 6px 4px;
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-bar-hint {
+    display: none !important;
+}
+
+
+/* ================= 1.3.32：底栏回到「上一版」观感 + 排序态 token↔↑↓ 换位 ================= */
+#completion_prompt_manager > .wbm-prompt-bar {
+    gap: 10px;
+    padding: 8px 6px;
+    margin: 0 0 8px;
+    background: var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .96));
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .12));
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+}
+
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-count {
+    margin-right: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    opacity: .6;
+    white-space: nowrap;
+}
+
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-sortbtn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 28px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));
+    background: transparent;
+    color: var(--SmartThemeBodyColor, inherit);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-sortbtn:hover {
+    border-color: var(--SmartThemeEmColor, #9c7bd6);
+    color: var(--SmartThemeEmColor, #9c7bd6);
+}
+
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-sortbtn.wbm-on {
+    border-color: var(--SmartThemeEmColor, #9c7bd6);
+    color: var(--SmartThemeEmColor, #9c7bd6);
+}
+
+/* 排序态：Token 数字让位给 ↑↓ */
+#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .prompt_manager_prompt_tokens,
+#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .prompt_manager_prompt_tokens * {
+    display: none !important;
+}
+
+#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 2px;
+    margin: 0 2px 0 6px;
+    padding: 0;
+    flex: 0 0 auto;
+    line-height: 1;
+    order: 99;
+}
+
+#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step > * {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-size: 12px;
+    opacity: .6;
+    cursor: pointer;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    margin: 0;
+}
+
+#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step > *:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 24%, transparent);
+}
+
+/* 自绘 SVG 图标（1.3.35）：不依赖宿主裁剪过的图标字体 */
+.wbm-ico { width: 14px; height: 14px; display: block; flex: 0 0 auto; pointer-events: none; }
+.wbm-pm-insert .wbm-ico { width: 13px; height: 13px; }
+.wbm-pm-step .wbm-ico { width: 12px; height: 12px; }
+.wbm-prompt-bar button .wbm-ico { width: 14px; height: 14px; }
+#wbm-talk-preset-btn .wbm-ico { width: 13px; height: 13px; }
+
+/* ================= 1.3.36：排序态 ↑↓ 改用自绘 SVG ================= */
+/* 宿主那份 Font Awesome 是裁剪过的子集，没有 .fa-arrow-up / .fa-arrow-down，
+   之前每行 ↑↓ 是空的「带叉方框」（master 2026-10-22 报的「直接不显示按键」）。
+   现在按钮里放 <svg class=wbm-ico>，不依赖任何图标字体。 */
+#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step .wbm-ico {
+    width: 14px;
+    height: 14px;
+}
+
+/* 触屏（手机/平板）：↑↓ 抬到 30×28。master 定的可点下限是图标键 34×32、胶囊 30，
+   22px 在手机上是「难以触发」那一档；桌面保持 22px，不为此挤小密度。 */
+@media (pointer: coarse) {
+    #completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > * {
+        width: 30px;
+        height: 28px;
+    }
+    #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step > * {
+        width: 30px;
+        height: 28px;
+    }
+    #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step .wbm-ico {
+        width: 16px;
+        height: 16px;
+        height: 16px;
+    }
+}
+
+/* 行内 ⤓：不必选中条目也一直看得见。之前 .25 的透明度在深色主题上等于没有键，
+   master 2026-10-22：「⤓ 不再隐身，直接不显示按键了」。没勾选时点它会提示先勾选。 */
+#completion_prompt_manager_list .wbm-pm-insert.wbm-pm-arrow-off {
+    opacity: .7;
+    cursor: pointer;
+}
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-insert {
+    width: 22px !important;
+    height: 26px !important;
+    margin-right: 4px !important;
+    opacity: .85;
+}
+@media (pointer: coarse) {
+    /* 旧的 !important（width:18px/height:22px）在前，必须同样 !important 才压得住。 */
+    #completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .wbm-pm-insert,
+    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-insert {
+        width: 30px !important;
+        height: 28px !important;
+    }
+    #completion_prompt_manager_list .wbm-pm-insert .wbm-ico {
+        width: 16px;
+        height: 16px;
+    }
+}
+/* ================= 1.3.37：性能 + 手机触摸 ================= */
+/* ⤓ 从勾选框右边挪到行尾（↑↓ 左边）：它原来紧贴勾选框，勾选时经常点到它、把条目搬错位置。
+   order 排序：seq(-5) box(-4) ☰(-3) name(1) 其它(2) token(3) ⤓(98) ↑↓(99)。 */
+#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-insert {
+    order: 98 !important;
+    margin: 0 0 0 8px !important;
+}
+/* 三个自绘键统一：去掉双击缩放/300ms 等待，也不再出蓝色高亮块。 */
+#completion_prompt_manager_list .wbm-pm-box,
+#completion_prompt_manager_list .wbm-pm-insert,
+#completion_prompt_manager_list .wbm-pm-step > * {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+@media (pointer: coarse) {
+    /* 勾选框放大到 20px 并与 ⤓ 之间留出整整一个名字区的距离（⤓ 已在行尾）。 */
+    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-box {
+        width: 20px !important;
+        height: 20px !important;
+        margin: 0 8px 0 0 !important;
+    }
+}
+
+
+/* ================= 1.3.38：复制到其它预设 ================= */
+/* 工具栏靠左那个键：与右边排序键同尺寸，靠 margin-right:auto 顶到最左，
+   已选计数改靠右（原来 count 上的 margin-right:auto 会把它也拉到左边）。 */
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-copybtn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 28px;
+    padding: 0;
+    margin: 0 auto 0 0;
+    border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));
+    background: transparent;
+    color: var(--SmartThemeBodyColor, inherit);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-copybtn:hover {
+    border-color: var(--SmartThemeEmColor, #9c7bd6);
+    color: var(--SmartThemeEmColor, #9c7bd6);
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-count {
+    margin-right: 0;
+}
+/* 浮层顶部那句「把 N 条复制到…」，以及预设行里用等宽字体把名字排整齐 */
+.wbm-copy-hint {
+    padding: 8px 14px 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    opacity: .75;
+}
+.wbm-copy-row-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#wbm-settings #wbm-regex-allow {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    white-space: nowrap;
+    text-align: center;
+    box-sizing: border-box;
+    margin: 8px 0 2px;
+}
+/* ================= 1.3.39：勾选框跟随主题 ================= */
+/* master 2026-10-22 报「勾选框没有随主体变化」，美化「寰宇独奏v1.5」下直接看不见。
+   查下来那套美化的 --SmartThemeBorderColor 是 rgba(251,219,179,0)（全透明），
+   而勾选框原来只靠 border: 2px solid var(--SmartThemeBorderColor) 画框 → 框线透明。
+   改成从正文字色调出来的灰：任何主题下都与底色有反差；勾选后的勾用底色画。 */
+#completion_prompt_manager_list .wbm-pm-box {
+    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 55%, transparent);
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 8%, transparent);
+}
+#completion_prompt_manager_list .wbm-pm-box:hover {
+    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 80%, transparent);
+}
+#completion_prompt_manager_list .wbm-pm-box.on {
+    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 85%, transparent);
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 88%, transparent);
+}
+#completion_prompt_manager_list .wbm-pm-box.on::after {
+    border-color: var(--SmartThemeBlurTintColor, #1c1c26);
+}
+
+/* ================= 1.3.39：插入提示词的搜索行 / 触屏浮窗 ================= */
+.wbm-append-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    margin: 6px 0 4px;
+}
+.wbm-append-bar .wbm-append-search {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 30px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+.wbm-append-bar .wbm-append-btn {
+    display: none;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    white-space: nowrap;
+}
+.wbm-append-bar .wbm-append-count {
+    flex: 0 0 auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    opacity: .6;
+    white-space: nowrap;
+}
+@media (pointer: coarse) {
+    /* 手机：原生下拉收起来，改用我们自己的浮窗 */
+    .wbm-append-bar[data-coarse='1'] .wbm-append-search { display: none; }
+    .wbm-append-bar[data-coarse='1'] .wbm-append-btn { display: inline-flex; }
+    #completion_prompt_manager_footer_append_prompt { display: none !important; }
+}
+
+/* ================= 1.3.39：复制确认条 ================= */
+.wbm-copy-confirm {
+    flex: 0 0 auto;
+    border-top: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 22%, transparent);
+    padding: 10px 14px 14px;
+    background: var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .96));
+}
+.wbm-copy-confirm-text {
+    font-size: 12px;
+    line-height: 1.5;
+    opacity: .85;
+    margin-bottom: 8px;
+}
+.wbm-copy-confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+.wbm-copy-preset-row.active {
+    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 22%, transparent);
+}
+.wbm-append-tag {
+    margin-left: auto;
+    padding-left: 10px;
+    font-size: 11px;
+    line-height: 1.4;
+    opacity: .55;
+    white-space: nowrap;
+}
+.wbm-append-inlist { opacity: .7; }
+
+/* ================= 1.3.40：查找已有条目 ================= */
+/* master 2026-10-22：参考 txt 编辑器的查找——搜已经添加好的条目，用上下切换跳转。
+   只高亮 + 跳转，不筛选、不动顺序。侧栏只有 243px 宽，所以查找行单独占第二行、平时收起。 */
+#completion_prompt_manager > .wbm-prompt-bar {
+    flex-wrap: wrap;
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-findbtn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 28px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));
+    background: transparent;
+    color: var(--SmartThemeBodyColor, inherit);
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-findbtn:hover,
+#completion_prompt_manager > .wbm-prompt-bar.wbm-find-open .wbm-prompt-findbtn {
+    border-color: var(--SmartThemeEmColor, #9c7bd6);
+    color: var(--SmartThemeEmColor, #9c7bd6);
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-find-tools {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    flex: 1 0 100%;
+    min-width: 0;
+    margin: 2px 0 0;
+}
+#completion_prompt_manager > .wbm-prompt-bar.wbm-find-open .wbm-find-tools {
+    display: flex;
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-find {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 28px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-find-prev,
+#completion_prompt_manager > .wbm-prompt-bar .wbm-find-next {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 28px;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 40%, transparent);
+    background: transparent;
+    color: var(--SmartThemeBodyColor, inherit);
+    cursor: pointer;
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-find-prev:disabled,
+#completion_prompt_manager > .wbm-prompt-bar .wbm-find-next:disabled {
+    opacity: .3;
+    cursor: default;
+}
+#completion_prompt_manager > .wbm-prompt-bar .wbm-find-count {
+    flex: 0 0 auto;
+    min-width: 34px;
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    opacity: .7;
+    white-space: nowrap;
+}
+#completion_prompt_manager_list li[data-pm-identifier].wbm-find-hit {
+    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 16%, transparent);
+}
+#completion_prompt_manager_list li[data-pm-identifier].wbm-find-cur {
+    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 28%, transparent);
+    outline: 2px solid color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 70%, transparent);
+    outline-offset: -2px;
+}
+@media (pointer: coarse) {
+    #completion_prompt_manager > .wbm-prompt-bar .wbm-find-prev,
+    #completion_prompt_manager > .wbm-prompt-bar .wbm-find-next {
+        width: 30px;
+        height: 30px;
+    }
+}.wbm-persona-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;}.wbm-persona-filter{display:flex;align-items:center;gap:8px;width:100%;min-height:38px;padding:0 10px;border-radius:10px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 12%, transparent);color:var(--SmartThemeBodyColor, inherit);font:inherit;font-size:13px;line-height:1.2;text-align:left;cursor:pointer;}.wbm-persona-filter:hover{border-color:var(--SmartThemeEmColor, #9c7bd6);}.wbm-persona-filter-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.wbm-persona-filter .wbm-ico{flex:0 0 auto;width:14px;height:14px;opacity:.75;}.wbm-persona-manage{flex:0 0 auto;height:30px;padding:0 12px;border-radius:999px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);background:transparent;color:var(--SmartThemeBodyColor, inherit);font:inherit;font-size:12px;cursor:pointer;}.wbm-persona-manage:hover{border-color:var(--SmartThemeEmColor, #9c7bd6);}.wbm-persona-hint{flex:0 0 auto;margin-left:auto;font-family:ui-monospace, monospace;font-size:11px;opacity:.6;}.wbm-persona-filter-row.on{border-color:var(--SmartThemeEmColor, #9c7bd6);background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 20%, transparent);}.wbm-persona-tag{display:inline-flex;align-items:center;margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 18%, transparent);color:var(--SmartThemeBodyColor, inherit);font-size:10px;line-height:14px;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}.wbm-persona-tag-none{background:transparent;opacity:.5;}@media (pointer: coarse){.wbm-persona-filter{min-height:42px;font-size:14px;}.wbm-persona-manage{height:34px;font-size:13px;}}
+/* ================= 1.3.43：人设列表分页 ================= */
+/* master 2026-10-23：角色多了列表特别长、还要同时显示多张图，所以按分组显示也分页。
+   页码占宿主分页条的位置（筛选时宿主那排临时藏起来），一个键换每页条数 5/10/20/50。 */
+.wbm-persona-grouppager {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    flex: 1 0 100%;
+    min-width: 0;
+    margin-top: 2px;
+}
+.wbm-persona-grouppager .wbm-persona-pagebtn {
+    height: 26px;
+    min-width: 26px;
+    padding: 0 6px;
+    font-size: 13px;
+    line-height: 1;
+}
+.wbm-persona-grouppager .wbm-persona-pageinfo {
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.wbm-persona-sizebtn {
+    flex: 0 0 auto;
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);
+    background: transparent;
+    color: var(--SmartThemeBodyColor, inherit);
+    font: inherit;
+    font-size: 11.5px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.wbm-persona-sizebtn:hover {
+    border-color: var(--SmartThemeEmColor, #9c7bd6);
+    color: var(--SmartThemeEmColor, #9c7bd6);
+}
+@media (pointer: coarse) {
+    .wbm-persona-grouppager .wbm-persona-pagebtn { height: 30px; min-width: 30px; }
+    .wbm-persona-sizebtn { height: 34px; font-size: 12.5px; }
+}
+
+/* ================= 1.3.42：人设分组性能与手感 ================= */
+.wbm-picker-row:hover{background:color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 8%, transparent);}.wbm-picker-row:active{background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 26%, transparent);}.wbm-persona-filter-row{cursor:pointer;}.wbm-persona-row{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;}.wbm-persona-row .wbm-picker-name{flex:0 1 auto;max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.wbm-persona-row-title{flex:0 1 auto;min-width:0;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;opacity:.6;}.wbm-persona-row-group{flex:0 0 auto;margin-left:auto;padding:0 8px;border-radius:999px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 40%, transparent);background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 18%, transparent);font-size:11px;line-height:18px;white-space:nowrap;max-width:104px;overflow:hidden;text-overflow:ellipsis;}.wbm-persona-row-group-none{background:transparent;opacity:.45;}.wbm-persona-row .wbm-preset-tool{flex:0 0 auto;white-space:nowrap;}.wbm-persona-pager{display:flex;align-items:center;gap:10px;padding:8px 14px 12px;flex:0 0 auto;}.wbm-persona-pagebtn{height:30px;padding:0 12px;border-radius:8px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);background:transparent;color:var(--SmartThemeBodyColor, inherit);font:inherit;font-size:12px;cursor:pointer;}.wbm-persona-pagebtn:hover:not(:disabled){border-color:var(--SmartThemeEmColor, #9c7bd6);color:var(--SmartThemeEmColor, #9c7bd6);}.wbm-persona-pagebtn:disabled{opacity:.35;cursor:default;}.wbm-persona-pageinfo{flex:1 1 auto;text-align:center;font-family:ui-monospace, monospace;font-size:11.5px;opacity:.7;}.wbm-persona-bar.wbm-flash .wbm-persona-filter{animation:wbm-flash .62s ease-out 1;}@keyframes wbm-flash{from{box-shadow:0 0 0 3px color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 65%, transparent);}to{box-shadow:0 0 0 0 transparent;}}@media (pointer: coarse){.wbm-persona-pagebtn{height:36px;font-size:13px;}.wbm-persona-row .wbm-preset-tool{min-height:34px;}}
+
+/* ===== 1.3.45：行内编辑与分组，浮层不关 ===== */
+.wbm-inline-groups { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.wbm-inline-groups .wbm-picker-action { height: 26px; padding: 0 8px; font-size: 12.5px; }
+.wbm-picker-row[data-role='preset-edit'] { flex-wrap: wrap; gap: 6px; align-items: center; cursor: default; }
+.wbm-picker-row[data-role='preset-edit']:hover { background: transparent; }
+.wbm-picker-titlerow .wbm-preset-tool { margin-left: auto; }
+@media (pointer: coarse) {
+    .wbm-inline-groups .wbm-picker-action { height: 32px; padding: 0 10px; font-size: 13.5px; }
+}
+
+#completion_prompt_manager_list li.wbm-find-pulse{animation:wbm-find-pulse .62s ease-out}@keyframes wbm-find-pulse{0%{box-shadow:0 0 0 2px color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 85%, transparent)}100%{box-shadow:0 0 0 2px color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 0%, transparent)}}
+
+/* ---------- 1.3.51：宿主分页控件不许被压扁（TT 的 #WorldInfo 固定 640px） ---------- */
+.wbm-scope-row #world_info_pagination {
+    flex: 0 0 auto;
+}
+.wbm-scope-row #world_info_pagination .paginationjs,
+.wbm-scope-row #world_info_pagination .paginationjs-nav,
+.wbm-scope-row #world_info_pagination .paginationjs-pages {
+    flex: 0 0 auto;
+}
+.wbm-scope-row #world_info_pagination .paginationjs-nav {
+    white-space: nowrap;
+}
+.wbm-scope-row #world_info_pagination select {
+    flex: 0 0 auto;
+    min-width: 4.6em;
+}
+
+/* 条目标题的伸缩底线：宿主给的是 flex:1 1 0%，抽屉一窄就压到 min-content */
+#world_popup_entries_list .WIEntryTitleAndStatus {
+    flex: 1 1 22em;
+    min-width: 14em;
+}
+#world_popup_entries_list .WIEntryTitleAndStatus > .flex-container {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+#world_popup_entries_list .WIEntryTitleAndStatus textarea[name="comment"] {
+    width: 100%;
+}
+
+/* ================= 1.3.53：世界书条目表头 ================= */
+/* 单排：小标题垂直居中到列中线（master 2026-10-23：位置对，但要上下居中） */
+#world_popup_entries_list > #WIEntryHeaderTitlesPC {
+    align-items: center;
+}
+/* 表头条内垂直居中：这条 !important 是刻意的——宿主模板给 <small> 带 inline 样式，
+   而且 alignEntryHeaders() 也会写 inline top，两者都要被这条压住，统一由样式表说话。 */
+#world_popup_entries_list > #WIEntryHeaderTitlesPC > small {
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+}
+
+/* 折成两排：整排表头无法与任何一列对齐，让位给每格自己的小标题
+   （复用宿主的 .WIEntryHeaderTitleMobile，手机端就是这么显示的，不另造标注）。
+   左右留白收到最小，四个字段按剩余宽度自动排一行或两行。 */
+#world_popup_entries_list.wbm-wi-wrapped > #WIEntryHeaderTitlesPC {
+    display: none !important;
+}
+#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+}
+#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls .world_entry_form_control {
+    flex: 1 1 7em;
+    min-width: 0;
+}
+#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls .WIEntryHeaderTitleMobile {
+    display: block !important;
+    font-size: 11.5px;
+    line-height: 1.25;
+    opacity: .68;
+    margin: 0 0 2px;
+    padding: 0 1px;
+    white-space: nowrap;
+}
+#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls select,
+#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls input {
+    width: 100% !important;
+    max-width: none !important;
+}
+
+/* ================= 提示词编辑框限制高度（1.3.0） =================
+   TT 酒馆里预设条目的编辑框会按内容整段展开，长条目时底部按钮被顶出视野。
+   这里只给酒馆自己的编辑框加一个上限，让它像 ST 那样在框内滚动；
+   酒馆（或其它扩展）自带的复制、查找、替换等按钮一律不碰、也不重排。 */
+html.wbm-pmcap-on #completion_prompt_manager_popup .completion_prompt_manager_popup_entry_form_control:has(#completion_prompt_manager_popup_entry_form_prompt) {
+    min-height: 0;
+    overflow: hidden;
+}
+html.wbm-pmcap-on #completion_prompt_manager_popup #completion_prompt_manager_popup_entry_form_prompt {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 200px;
+    max-height: min(52vh, 640px);
+    max-height: min(52dvh, 640px);
+    overflow-y: auto;
+    resize: vertical;
+}
+@media (max-width: 760px) {
+    html.wbm-pmcap-on #completion_prompt_manager_popup #completion_prompt_manager_popup_entry_form_prompt {
+        max-height: min(46vh, 520px);
+        max-height: min(46dvh, 520px);
+    }
 }

@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    const VERSION = (window.__wbmBoot && window.__wbmBoot.version) || '1.2.3';
+    const VERSION = (window.__wbmBoot && window.__wbmBoot.version) || '1.3.0';
     /* 构建标记：版本号不随小修变化（都写 1.0.3），只看版本号分不出新旧，
        所以另外标一个构建号，控制台里能直接看出页面跑的是哪一份。
        发布时与 manifest 里 js/css 的 ?ver 保持一致（构建脚本会校验）。 */
@@ -64,18 +64,67 @@
 
     function hostEl() { return document.querySelector('#WIMultiSelector'); }
 
-    function el(tag, cls, text) {
+    /* 自绘 SVG 图标：宿主自带的 Font Awesome 是裁剪过的子集，某些图标名（fa-angles-down /
+   fa-arrow-up-arrow-down / fa-arrow-down-to-line）拿不到字形，浏览器画出「带叉的空框」。
+   凡是我们自己注入的键，一律用内联 SVG，不依赖图标字体。 */
+function wbmIcon(kind) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.classList.add('wbm-ico');
+    const mk = (d, extra) => {
+        const p = document.createElementNS(NS, 'path');
+        p.setAttribute('d', d);
+        p.setAttribute('fill', 'none');
+        p.setAttribute('stroke', 'currentColor');
+        p.setAttribute('stroke-width', extra && extra.w ? extra.w : '1.5');
+        p.setAttribute('stroke-linecap', 'round');
+        p.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(p);
+        return p;
+    };
+    if (kind === 'insert') {          // 插入到这一条下面
+        mk('M8 2.2v7.1M5.2 6.6 8 9.4l2.8-2.8M3.2 12.6h9.6');
+    } else if (kind === 'sort') {     // 进入调整排序：上下箭头
+        mk('M5 11.6V4.4M2.6 6.8 5 4.4l2.4 2.4M11 4.4v7.2m-2.4-2.4L11 11.6l2.4-2.4');
+    } else if (kind === 'exit') {     // 退出调整排序：叉
+        mk('M4 4l8 8M12 4l-8 8');
+    } else if (kind === 'check') {
+        mk('M3.4 8.4 6.4 11.4l6.2-6.4');
+    } else if (kind === 'up') {       // 上移一格（排序态每行）
+        mk('M8 13V3.6M4.4 7.2 8 3.6l3.6 3.6');
+    } else if (kind === 'down') {     // 下移一格（排序态每行）
+        mk('M8 3v9.4M4.4 8.8 8 12.4l3.6-3.6');
+    } else if (kind === 'copy') {     // 复制条目到其它预设：两张叠起来的纸
+        mk('M6.2 6.2h6.4v6.4H6.2z');
+        mk('M3.4 3.4h6.4v6.4');
+    } else if (kind === 'search') {   // 搜索（1.3.39：插入提示词浮窗的入口键）
+        mk('M11.4 7a4.4 4.4 0 1 1-8.8 0 4.4 4.4 0 0 1 8.8 0');
+        mk('M10.6 10.6 13.4 13.4');
+    } else if (kind === 'chev') {     // 下拉提示（1.3.41：人设分组横条）
+        mk('M4.4 6.4 8 10l3.6-3.6');
+    }
+    return svg;
+}
+
+function el(tag, cls, text) {
         const node = document.createElement(tag);
         if (cls) node.className = cls;
         if (text !== undefined) node.textContent = text;
         return node;
     }
 
+    /* toastr 的方法名只有 success / info / warning / error；
+       本文件里有 14 处写成了 ok / warn / err，以前是静默失败（点了没反应）。 */
+    const WBM_TOAST_ALIAS = { ok: 'success', warn: 'warning', err: 'error' };
     function toast(kind, text) {
         try {
             const api = window.toastr;
-            if (api && typeof api[kind] === 'function') {
-                api[kind](text, '', { timeOut: kind === 'error' ? 4000 : 1600, preventDuplicates: true });
+            const name = WBM_TOAST_ALIAS[kind] || kind;
+            if (api && typeof api[name] === 'function') {
+                api[name](text, '', { timeOut: name === 'error' ? 4000 : 1600, preventDuplicates: true });
             }
         } catch (e) { /* ignore */ }
     }
@@ -230,8 +279,19 @@
         msgDblClickEdit: true,
         /* 备选回复页码：接管酒馆原生页码位置（三选一），并把手机上「点了没反应」补成单击 */
         swipeTakeover: true,
+        /* 正则守护：记下上次「启用中」的脚本 id，整批失效时按它恢复 */
+        regexGuard: null,
+        /* 人设管理：每个头像 id 归到哪个自建分组，以及列表当前筛的组 */
+        personaGroups: {},
+        personaFilter: '',
+        /* 按分组显示时临时放大的每页条数，回到「全部」时按它还原 */
+        personaPerPageSaved: '',
+        /* 人设列表每页条数（按分组显示、设置分组浮层共用）：5 / 10 / 20 / 50 */
+        personaPageSize: 10,
         editBarBothEnds: true,
         enhanceEnabled: true,
+        /* 各功能区独立开关（1.3.56）：默认全开；关掉只影响自己那一块，总开关仍在上面 */
+        features: { promptMgr: true, persona: true, talkPreset: true, headerAlign: true, regexGuard: true, frontendGuard: true },
         searchScope: SEARCH_SCOPE_VALUES.slice(),
         /* 「扫描全部聊天」与「扫描全部角色卡」的结果缓存：书名小写数组 + 时间 + 扫过的数量 */
         catChatBooks: [],
@@ -374,8 +434,15 @@
                 store.entryClickLock = cfg.entryClickLock !== false;
                 store.msgDblClickEdit = cfg.msgDblClickEdit !== false;
                 store.swipeTakeover = cfg.swipeTakeover !== false;
+                store.regexGuard = (cfg.regexGuard && Array.isArray(cfg.regexGuard.ids)) ? cfg.regexGuard : null;
+                store.personaGroups = (cfg.personaGroups && typeof cfg.personaGroups === 'object') ? cfg.personaGroups : {};
+                store.personaFilter = typeof cfg.personaFilter === 'string' ? cfg.personaFilter : '';
+                store.personaPerPageSaved = typeof cfg.personaPerPageSaved === 'string' ? cfg.personaPerPageSaved : '';
+                store.personaPageSize = [5, 10, 20, 50].indexOf(Number(cfg.personaPageSize)) >= 0 ? Number(cfg.personaPageSize) : 10;
+                store.talkPresetGroups = (cfg.talkPresetGroups && typeof cfg.talkPresetGroups === 'object') ? cfg.talkPresetGroups : {};
                 store.editBarBothEnds = cfg.editBarBothEnds !== false;
                 store.enhanceEnabled = cfg.enhanceEnabled !== false;
+                store.features = Object.assign({}, FEATURE_DEFAULTS, (cfg.features && typeof cfg.features === 'object') ? cfg.features : {});
                 store.searchScope = normalizeSearchScope(cfg.searchScope, SEARCH_SCOPE_VALUES.slice());
                 store.catChatBooks = Array.isArray(cfg.catChatBooks) ? cfg.catChatBooks.map(String) : [];
                 store.catChatAt = Number(cfg.catChatAt) || 0;
@@ -455,8 +522,17 @@
             cfg.entryClickLock = store.entryClickLock !== false;
             cfg.msgDblClickEdit = store.msgDblClickEdit !== false;
             cfg.swipeTakeover = store.swipeTakeover !== false;
+            cfg.personaGroups = (store.personaGroups && typeof store.personaGroups === 'object') ? store.personaGroups : {};
+            cfg.personaFilter = String(store.personaFilter || '');
+            cfg.personaPerPageSaved = String(store.personaPerPageSaved || '');
+            cfg.personaPageSize = Number(store.personaPageSize) || 10;
+            cfg.regexGuard = (store.regexGuard && Array.isArray(store.regexGuard.ids))
+                ? { ids: store.regexGuard.ids.slice(), at: Number(store.regexGuard.at) || 0 }
+                : null;
+            cfg.talkPresetGroups = (store.talkPresetGroups && typeof store.talkPresetGroups === 'object') ? store.talkPresetGroups : {};
             cfg.editBarBothEnds = store.editBarBothEnds !== false;
             cfg.enhanceEnabled = store.enhanceEnabled !== false;
+            cfg.features = Object.assign({}, FEATURE_DEFAULTS, (store.features && typeof store.features === 'object') ? store.features : {});
             cfg.searchScope = normalizeSearchScope(store.searchScope, SEARCH_SCOPE_VALUES.slice());
             store.searchScope = cfg.searchScope.slice();
             cfg.catChatBooks = store.catChatBooks.slice();
@@ -541,9 +617,12 @@
     /* 关面板：留 190ms 让退场动画跑完；这期间遮罩仍在 DOM 里，顺手挡住那一下点击别穿透到背后 */
     function closeEditorPicker(immediate) {
         document.querySelectorAll('.wbm-picker').forEach((mask) => {
-            if (mask.dataset.closing === '1') return;
+            /* 已经标过 closing 但还挂在页面上的：说明上次的 190ms 没跑到，
+               这里直接摘掉，否则它会一直拦截点击（2026-10-21 人设浮层「卡住」的真因）。 */
+            if (mask.dataset.closing === '1') { mask.remove(); return; }
             if (immediate === true) { mask.remove(); return; }
             mask.dataset.closing = '1';
+            mask.style.pointerEvents = 'none';
             mask.classList.add('closing');
             setTimeout(() => mask.remove(), 190);
         });
@@ -926,7 +1005,10 @@ function updateEditorButton() {
         return Math.min(Math.round(covered / 2), 160);
     }
 
-    function makePickerShell() {
+    function makePickerShell(opts) {
+        /* flat：不要 backdrop-filter。人设浮层底下压着整屏头像，模糊每帧都要重算，
+           低配机上会明显发卡（master 2026-10-21 报「点开分组就卡住」）。 */
+        const flat = !!(opts && opts.flat);
         const mask = el('div', 'wbm-picker');
         const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
         const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
@@ -956,8 +1038,19 @@ function updateEditorButton() {
            ST 就判定成"点了世界书面板外面"，直接把抽屉收掉。
            这里让浮层自己吃掉按压类事件，别让它们冒到 <html>/document。 */
         const stopPress = (event) => { event.stopPropagation(); };
-        ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'contextmenu', 'wheel']
+        ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'contextmenu', 'wheel', 'click']
             .forEach((type) => mask.addEventListener(type, stopPress, { passive: true }));
+
+        /* 头部那个 ✕（data-role="picker-close"）由各浮层自己接事件时经常漏接，
+           人设浮层就是漏接的那一个：✕ 画了出来但点它没反应。
+           这里在遮罩层统一兜一次，任何浮层的 ✕ 都能关。 */
+        mask.addEventListener('click', (event) => {
+            const target = event.target;
+            if (target instanceof Element && target.closest('[data-role="picker-close"]')) {
+                event.preventDefault();
+                closeEditorPicker();
+            }
+        });
 
         /* 按在浮层空白处滑动时不要带动背后页面滚（列表内的滚动仍交给浏览器原生处理） */
         mask.addEventListener('touchmove', (event) => {
@@ -977,7 +1070,7 @@ function updateEditorButton() {
         sheet.style.border = '1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.16))';
         sheet.style.background = 'var(--SmartThemeBlurTintColor, rgba(28,28,38,.96))';
         sheet.style.color = 'var(--SmartThemeBodyColor, inherit)';
-        sheet.style.backdropFilter = 'blur(10px)';
+        if (!flat) sheet.style.backdropFilter = 'blur(10px)';
         sheet.style.overflow = 'hidden';
         mask.appendChild(sheet);
 
@@ -1022,12 +1115,28 @@ function updateEditorButton() {
             layout();
             sheetShift();
         };
+        /* 1.3.48：全局监听必须在浮层被摘掉时同步摘除。
+           以前只在 follow() 被 resize 事件触发、且发现 sheet 已断开时才自己摘——
+           窗口不变就永远摘不掉，每个浮层留一份闭包把整棵树（几百个节点、两百多个监听）
+           一起拽住（实测开关 20 次泄漏 +14263 节点 / +5420 监听器）。 */
+        const teardown = () => {
+            if (mask.__wbmTornDown) return;
+            mask.__wbmTornDown = true;
+            if (vv) {
+                vv.removeEventListener('resize', follow);
+                vv.removeEventListener('scroll', follow);
+            }
+            window.removeEventListener('resize', follow);
+            window.removeEventListener('orientationchange', follow);
+        };
         if (vv) {
             vv.addEventListener('resize', follow);
             vv.addEventListener('scroll', follow);
         }
         window.addEventListener('resize', follow);
         window.addEventListener('orientationchange', follow);
+        const rawRemove = mask.remove.bind(mask);
+        mask.remove = () => { teardown(); rawRemove(); };
         layout();
         return { mask, sheet };
     }
@@ -2443,6 +2552,7 @@ function updateEditorButton() {
         const text = String(label.textContent || '').replace(/\s+/g, '');
         if (text.length < 3) return;
         const mid = Math.ceil(text.length / 2);
+        label.dataset.wbmText = text;
         label.textContent = '';
         label.appendChild(document.createTextNode(text.slice(0, mid)));
         label.appendChild(document.createElement('br'));
@@ -2451,11 +2561,37 @@ function updateEditorButton() {
         label.style.lineHeight = '1.15';
     }
 
-    function alignEntryHeaders() {
-        if (window.matchMedia && window.matchMedia('(max-width: 1000px)').matches) return false;
+    /* 字段块是否被压到名字框下方（= 条目行折成两排）。
+       判定不猜宽度，量真实位置：控件块的上沿明显低于名字框上沿就算折了。 */
+    function entryFieldsWrapped() {
         const list = document.querySelector('#world_popup_entries_list');
+        if (!list) return false;
+        const row = list.querySelector('.world_entry');
+        if (!row) return false;
+        const name = row.querySelector('textarea[name="comment"]');
+        const controls = row.querySelector('.WIEnteryHeaderControls');
+        if (!name || !controls) return false;
+        const a = name.getBoundingClientRect();
+        const b = controls.getBoundingClientRect();
+        if (!a.height || !b.height) return false;
+        return b.top > a.top + 4;
+    }
+
+    function alignEntryHeaders() {
+        if (!featureOn('headerAlign')) { resetEntryHeaders(); return false; }
+        const list = document.querySelector('#world_popup_entries_list');
+        if (!list) return false;
+        /* 折成两排时整排表头无法与任何一列对齐（master 2026-10-23 反馈图1），
+           让它让位，改用每格自己的小标题——宿主本来就有 .WIEntryHeaderTitleMobile，
+           手机端就是这么显示的，这里复用它，不再另造一套标注。
+           顺序：先判折行再判宽度。1.3.53 把宽度早退放在前面，≤1000px 直接 return，
+           折行类永远打不上（1.3.54 实测 760/390 漏标）。 */
+        const wrappedNow = entryFieldsWrapped();
+        list.classList.toggle('wbm-wi-wrapped', wrappedNow);
+        if (window.matchMedia && window.matchMedia('(max-width: 1000px)').matches) return false;
         const header = document.getElementById('WIEntryHeaderTitlesPC');
-        if (!list || !header) return false;
+        if (!header) return false;
+        if (wrappedNow) return true;
         const row = list.querySelector('.world_entry');
         if (!row) return false;
         const fields = [
@@ -2472,16 +2608,19 @@ function updateEditorButton() {
         const headerRect = header.getBoundingClientRect();
         header.style.position = 'relative';
         header.style.justifyContent = 'flex-start';
+        header.style.alignItems = 'center';
         header.style.paddingLeft = '0';
         header.style.paddingRight = '0';
         const height = Math.max(headerRect.height, 18);
         header.style.minHeight = height + 'px';
         labels.forEach((label) => {
             label.style.position = 'absolute';
-            label.style.top = '0';
+            /* 小标题属于这条表头，垂直只在「条内」居中：top:50% + translateY(-50%)。
+               不要按字段中线算——那会把小标题推到条目行上压住输入框（1.3.54 的错，master 满屏截图）。 */
+            label.style.top = '50%';
             label.style.left = '0px';
             label.style.width = 'auto';
-            label.style.transform = 'none';
+            label.style.transform = 'translateY(-50%)';
         });
         labels.forEach((label, index) => {
             const fieldRect = fields[index].getBoundingClientRect();
@@ -2602,6 +2741,123 @@ function updateEditorButton() {
 
     /* 总开关（静音键）：关掉后所有增强都不挂载、不响应，界面回到原生酒馆；
        各子开关的状态原样保留，重新打开即恢复。设置抽屉本身永远留着，否则解不开。 */
+    /* ---------------- 各功能区的独立开关（1.3.56） ----------------
+       master 2026-10-23：不需要的人应该能自己关掉。每个开关只管自己那一块：
+       关掉＝把自绘的节点收走、行为退回原生，不影响别的区；总开关仍是上面的「全部关闭」。 */
+    const FEATURE_DEFAULTS = { promptMgr: true, persona: true, talkPreset: true, headerAlign: true, regexGuard: true, frontendGuard: true, promptEditorCap: true };
+
+    function featureOn(key) {
+        if (!enhancementsOn()) return false;
+        const f = (store.features && typeof store.features === 'object') ? store.features : null;
+        if (!f) return true;
+        return f[key] !== false;
+    }
+
+    function setFeature(key, on) {
+        if (!store.features || typeof store.features !== 'object') store.features = Object.assign({}, FEATURE_DEFAULTS);
+        store.features[key] = !!on;
+        persistStore();
+    }
+
+    /* 提示词管理器：工具条、插入搜索条、排序态、查找高亮全收走，退出排序态但不回写 order
+       （关功能不等于替用户改数据）。 */
+    function teardownPromptMgrDom() {
+        try { if (pmSortOn) exitPmSort({ skipRepair: true }); } catch (err) { console.warn('[wbm] 退出排序态失败', err); }
+        try { clearPromptFind(); } catch (err) { /* 没开查找时不用清 */ }
+        const list = document.getElementById('completion_prompt_manager_list');
+        if (list) {
+            try { stripSortRows(list, pmSortTargets()); } catch (err) { /* 列表已换掉就跳过 */ }
+            list.classList.remove('wbm-sorting');
+            list.querySelectorAll('li.wbm-find-hit, li.wbm-find-cur, li.wbm-find-pulse').forEach((li) => {
+                li.classList.remove('wbm-find-hit', 'wbm-find-cur', 'wbm-find-pulse');
+            });
+        }
+        const bar = document.querySelector('#completion_prompt_manager > .wbm-prompt-bar');
+        if (bar) bar.remove();
+        const appendBar = document.querySelector('.wbm-append-bar');
+        if (appendBar) appendBar.remove();
+        const ver = document.querySelector('.completion_prompt_manager_footer .wbm-pm-ver');
+        if (ver) ver.remove();
+        if (pmExtrasObserver) {
+            try { pmExtrasObserver.disconnect(); } catch (err) { /* 已经断开 */ }
+            pmExtrasObserver = null;
+            pmExtrasObserverTarget = null;
+        }
+        wbmBarNode = null;
+        wbmAppendBarNode = null;
+        decoratePromptRows.lastSignature = '';
+        decoratePromptRows.mode = null;
+    }
+
+    /* 人设：横条、标签、分页一起收走，并把人全部放回来、每页条数还原成用户的设置 */
+    function teardownPersona() {
+        const bar = document.getElementById('wbm-persona-bar');
+        if (bar) bar.remove();
+        document.querySelectorAll('#user_avatar_block .wbm-persona-tag').forEach((node) => node.remove());
+        document.querySelectorAll('#user_avatar_block .avatar-container').forEach((box) => {
+            setPersonaBoxVisible(box, true);
+            box.style.display = '';
+        });
+        const hostPager = document.getElementById('persona_pagination_container');
+        if (hostPager) hostPager.style.display = '';
+        const gp = document.getElementById('wbm-persona-grouppager');
+        if (gp) gp.remove();
+        /* 筛选状态故意保留：重开开关就回到原来那个组（大师 2026-10-23 的开关语义是"暂时不用这块"） */
+        personaApplyPaging().catch(() => {});
+    }
+
+    /* 表头：把我们写进去的 inline 全清掉（含「触发策略」被拆成的两行），交还给宿主样式 */
+    function resetEntryHeaders() {
+        const list = document.querySelector('#world_popup_entries_list');
+        if (list) list.classList.remove('wbm-wi-wrapped');
+        const header = document.getElementById('WIEntryHeaderTitlesPC');
+        if (header) {
+            header.style.position = '';
+            header.style.justifyContent = '';
+            header.style.alignItems = '';
+            header.style.paddingLeft = '';
+            header.style.paddingRight = '';
+            header.style.minHeight = '';
+            Array.from(header.children).forEach((label) => {
+                const text = label.dataset ? label.dataset.wbmText : '';
+                if (text) label.textContent = text;
+                if (label.dataset) delete label.dataset.wbmText;
+                label.removeAttribute('style');
+            });
+        }
+        headerAlignDone = false;
+    }
+
+    function applyFeatureToggle(key) {
+        try {
+            if (key === 'promptMgr') {
+                if (featureOn('promptMgr')) hookPromptManagerExtras();
+                else teardownPromptMgrDom();
+            } else if (key === 'persona') {
+                if (featureOn('persona')) ensurePersonaBar();
+                else teardownPersona();
+            } else if (key === 'talkPreset') {
+                if (featureOn('talkPreset')) ensureTalkPresetButton();
+                else {
+                    const btn = document.getElementById('wbm-talk-preset-btn');
+                    if (btn) btn.remove();
+                }
+            } else if (key === 'headerAlign') {
+                if (featureOn('headerAlign')) { alignEntryHeadersOnce(); ensureHeaderAlignObserver(); }
+                else resetEntryHeaders();
+            } else if (key === 'regexGuard') {
+                if (featureOn('regexGuard')) regexGuardCheck({ silent: true });
+            } else if (key === 'promptEditorCap') {
+                syncPromptEditorCap();
+            } else if (key === 'frontendGuard') {
+                if (featureOn('frontendGuard')) ensureFrontendCardsRendered().catch(() => {});
+            }
+        } catch (err) {
+            console.warn('[wbm] 切换功能开关失败：' + key, err);
+        }
+        syncPanelNotes();
+    }
+
     function enhancementsOn() {
         return store.enhanceEnabled !== false;
     }
@@ -3195,6 +3451,7 @@ function updateEditorButton() {
     }
 
     function ensureHeaderAlignObserver() {
+        if (!featureOn('headerAlign')) return;
         const header = document.getElementById('WIEntryHeaderTitlesPC');
         if (!header) return;
         if (headerAlignObserver) return;
@@ -3210,6 +3467,10 @@ function updateEditorButton() {
             headerAlignDone = alignEntryHeaders();
         });
         headerAlignObserver.observe(header);
+        /* 列表宽度跟着面板走：宽度一变就可能从单排变两排（或反过来），要重新判定。
+           表头自己的宽度不变，只盯它不会触发。 */
+        const listForObserve = document.querySelector('#world_popup_entries_list');
+        if (listForObserve) headerAlignObserver.observe(listForObserve);
     }
 
     /* 条目头的 DOM 现在两端一致：触发策略（🔵/🟢/🔗）本来就坐在标题右边，删除键本来就跟着
@@ -4423,7 +4684,14 @@ function updateEditorButton() {
             const { mask, sheet } = makePickerShell();
             state.picker = mask;
             sheet.appendChild(el('div', 'wbm-picker-grip'));
-            sheet.appendChild(el('div', 'wbm-picker-title', '全局世界书预设'));
+            const titleRow = el('div', 'wbm-picker-titlerow');
+            titleRow.appendChild(el('div', 'wbm-picker-title', '全局世界书预设'));
+            const manageBtn = el('button', 'wbm-preset-tool', '管理分组');
+            manageBtn.type = 'button';
+            manageBtn.dataset.role = 'preset-manage-groups';
+            manageBtn.title = '新建分组、给分组改名或删除';
+            titleRow.appendChild(manageBtn);
+            sheet.appendChild(titleRow);
             const list = el('div', 'wbm-picker-list');
             const books = currentGlobalBooks();
             const active = presetForBooks(books);
@@ -4479,24 +4747,103 @@ function updateEditorButton() {
                 });
             });
             sheet.appendChild(list);
+            /* 一行做就地编辑：改完只重画这一行，浮层本身不动。
+               原因：分组、改名很少只做一次，关掉再开会丢掉位置（master 2026-10-22 的要求）。 */
+            const rerenderRow = (row, id) => {
+                const preset = presetById(id);
+                if (!preset) { row.remove(); return; }
+                const fresh = mkRow(preset.id, preset.name, preset.books.length, !!(active && active.id === preset.id));
+                row.replaceWith(fresh);
+            };
+            const startPresetRenameInline = (row, id) => {
+                const preset = presetById(id);
+                if (!preset || !row) return;
+                row.dataset.role = 'preset-edit';
+                row.innerHTML = '';
+                const field = el('input', 'wbm-name-input-inline');
+                field.type = 'text';
+                field.maxLength = 40;
+                field.value = preset.name;
+                const ok = el('button', 'wbm-picker-action primary', '确定');
+                const cancel = el('button', 'wbm-picker-action', '取消');
+                ok.type = 'button';
+                cancel.type = 'button';
+                const submit = () => {
+                    if (presetRename(id, field.value)) rerenderRow(row, id);
+                    else { field.focus(); field.select(); }
+                };
+                ok.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); submit(); });
+                cancel.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); rerenderRow(row, id); });
+                field.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
+                    if (ev.key === 'Escape') { ev.preventDefault(); rerenderRow(row, id); }
+                });
+                row.appendChild(el('span', 'wbm-picker-name', '改名 →'));
+                row.appendChild(field);
+                row.appendChild(ok);
+                row.appendChild(cancel);
+                setTimeout(() => { field.focus(); field.select(); }, 20);
+            };
+            const startPresetGroupInline = (row, id) => {
+                const preset = presetById(id);
+                if (!preset || !row) return;
+                row.dataset.role = 'preset-edit';
+                row.innerHTML = '';
+                const chips = el('div', 'wbm-inline-groups');
+                const chip = (gid, text, on) => {
+                    const b = el('button', 'wbm-picker-action' + (on ? ' primary' : ''), text);
+                    b.type = 'button';
+                    b.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        if (gid === '__new') { askNewGroup(); return; }
+                        movePresetToGroup(id, gid);
+                        rerenderRow(row, id);
+                    });
+                    chips.appendChild(b);
+                };
+                const askNewGroup = () => {
+                    chips.textContent = '';
+                    const field = el('input', 'wbm-name-input-inline');
+                    field.type = 'text';
+                    field.maxLength = 30;
+                    field.placeholder = '新分组名';
+                    const ok = el('button', 'wbm-picker-action primary', '确定');
+                    ok.type = 'button';
+                    ok.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        const group = createGroup(field.value);
+                        if (!group) { field.focus(); return; }
+                        movePresetToGroup(id, group.id);
+                        rerenderRow(row, id);
+                    });
+                    chips.appendChild(field);
+                    chips.appendChild(ok);
+                    setTimeout(() => field.focus(), 20);
+                };
+                row.appendChild(el('span', 'wbm-picker-name', preset.name + ' →'));
+                chip('', '不分组', !preset.groupId);
+                store.presetGroups.forEach((g) => chip(g.id, g.name, preset.groupId === g.id));
+                chip('__new', '新建…', false);
+                row.appendChild(chips);
+            };
             list.addEventListener('click', (event) => {
                 const target = event.target;
                 if (!(target instanceof Element)) return;
+                if (target.closest('[data-role="preset-edit"]')) return;
                 const moveBtn = target.closest('[data-role="preset-move"]');
                 if (moveBtn) {
                     event.preventDefault();
                     event.stopPropagation();
-                    /* 换成"分组管理"浮层：那边既能移动，也能给分组改名/删除 */
-                    closeEditorPicker();
-                    setTimeout(() => openGroupPicker(moveBtn.dataset.id, true), 60);
+                    startPresetGroupInline(moveBtn.closest('[data-role="preset-pick"]'), moveBtn.dataset.id);
                     return;
                 }
                 const renameBtn = target.closest('[data-role="preset-rename-inline"]');
                 if (renameBtn) {
                     event.preventDefault();
                     event.stopPropagation();
-                    closeEditorPicker();
-                    setTimeout(() => openPresetRename(renameBtn.dataset.id), 60);
+                    startPresetRenameInline(renameBtn.closest('[data-role="preset-pick"]'), renameBtn.dataset.id);
                     return;
                 }
                 const overBtn = target.closest('[data-role="preset-over-inline"]');
@@ -4511,8 +4858,8 @@ function updateEditorButton() {
                         return;
                     }
                     state.presetOverArm = null;
-                    closeEditorPicker();
                     presetOverwrite(id);
+                    rerenderRow(overBtn.closest('[data-role="preset-pick"]'), id);
                     return;
                 }
                 const delBtn = target.closest('[data-role="preset-del-inline"]');
@@ -4527,8 +4874,9 @@ function updateEditorButton() {
                         return;
                     }
                     state.presetDelArm = null;
-                    closeEditorPicker();
+                    const delRow = delBtn.closest('[data-role="preset-pick"]');
                     presetRemove(id);
+                    if (delRow) delRow.remove();
                     return;
                 }
                 const row = target.closest('[data-role="preset-pick"]');
@@ -4541,6 +4889,15 @@ function updateEditorButton() {
                 closeEditorPicker();
                 if (id === 'custom') applyCustomBooks();
                 else if (id) presetApply(id);
+            });
+            sheet.addEventListener('click', (event) => {
+                const target = event.target;
+                if (!(target instanceof Element)) return;
+                if (!target.closest('[data-role="preset-manage-groups"]')) return;
+                event.preventDefault();
+                event.stopPropagation();
+                closeEditorPicker();
+                setTimeout(() => openGroupPicker(null, true), 60);
             });
             mask.addEventListener('click', (event) => {
                 if (event.target === mask) closeEditorPicker();
@@ -4701,6 +5058,8 @@ function updateEditorButton() {
 
             const list = el('div', 'wbm-picker-list');
             const rebuild = () => {
+                /* 重建（保存改名、新建/删除分组后）保留滚动位置，别让读者从头再找 */
+                state.groupPickerTop = list.scrollTop;
                 mask.remove();
                 openGroupPicker(presetId, manageOnly);
             };
@@ -4861,6 +5220,7 @@ function updateEditorButton() {
                 if (event.target === mask) closeSelf();
             });
             document.documentElement.appendChild(mask);
+            if (state.groupPickerTop) list.scrollTop = state.groupPickerTop;
             input.focus();
         } catch (err) {
             console.warn('[wb] 打开分组浮层失败', err);
@@ -7557,7 +7917,2155 @@ function updateEditorButton() {
         queueScan();
     }
 
-    function bindMessageDblClick() {
+    /* ================= ⑧ 前端卡漏渲染守护（1.3.52）=================
+   酒馆助手（JS-Slash-Runner）把消息里的整页 HTML 包成 div.TH-render + iframe 显示，
+   它的重建全靠宿主事件；偶尔会漏掉一条，消息正文停在 <pre><code> 的代码块，刷新才恢复。
+   这里只查不画：发现「该显示却没显示」就替它补发一次重建事件，渲染仍由酒馆助手做，
+   我们不碰 .mes_text 的内容，也不自己造 iframe。 */
+
+    const frontendGuardTries = new Map();
+    let frontendGuardChat = '';
+    let frontendGuardAt = 0;
+    let frontendGuardTimer = 0;
+    let frontendGuardRetry = 0;
+    let frontendGuardRunning = false;
+
+    function tavernHelperRender() {
+        try {
+            const ctx = stCtx();
+            const th = ctx && ctx.extensionSettings && ctx.extensionSettings.tavern_helper;
+            const render = th && th.render;
+            return render && render.enabled !== false ? render : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function looksLikeFrontendCard(textNode) {
+        if (!textNode) return false;
+        if (textNode.querySelector('.TH-render, iframe')) return false;
+        const pre = textNode.querySelector('pre');
+        if (!pre) return false;
+        return /(html>|<head[ >]|<body[ >])/i.test(pre.textContent || '');
+    }
+
+    /* 每条消息最多试三次：1＝「消息被编辑」（温和，只让酒馆助手重建这一条），
+       2＝「消息刚渲染完」（兜底，1.3.52 实测有的情况下第一条路会连包裹层一起摘掉），
+       3 之后就放手，不再反复打扰。 */
+    async function ensureFrontendCardsRendered() {
+        if (!featureOn('frontendGuard')) return 0;
+        if (!tavernHelperRender()) return 0;
+        if (!document.getElementById('tavern_helper')) return 0;
+        if (frontendGuardRunning) return 0;
+        const ctx = stCtx();
+        if (!ctx || !ctx.eventSource || !ctx.eventTypes) return 0;
+        if (!ctx.eventTypes.MESSAGE_EDITED || !ctx.eventTypes.CHARACTER_MESSAGE_RENDERED) return 0;
+        const chat = Array.isArray(ctx.chat) ? ctx.chat : [];
+        const chatKey = String(ctx.chatId || '') + '#' + chat.length;
+        if (chatKey !== frontendGuardChat) { frontendGuardChat = chatKey; frontendGuardTries.clear(); }
+        const now = Date.now();
+        if (now - frontendGuardAt < 1500) return 0;
+        const depth = Number(tavernHelperRender().depth) || 0;
+        const minId = depth > 0 ? Math.max(0, chat.length - depth) : 0;
+        frontendGuardRunning = true;
+        try {
+            const nodes = document.querySelectorAll('#chat .mes');
+            for (const mes of nodes) {
+                const id = Number(mes.getAttribute('mesid'));
+                if (!Number.isFinite(id) || id < minId) continue;
+                if (!looksLikeFrontendCard(mes.querySelector('.mes_text'))) continue;
+                const tries = frontendGuardTries.get(id) || 0;
+                if (tries >= 3) continue;
+                frontendGuardTries.set(id, tries + 1);
+                frontendGuardAt = now;
+                if (tries === 0) {
+                    console.info('[wbm] 第 ' + id + ' 条该显示前端卡却没显示，请酒馆助手重建');
+                    await ctx.eventSource.emit(ctx.eventTypes.MESSAGE_EDITED, id);
+                    clearTimeout(frontendGuardRetry);
+                    frontendGuardRetry = setTimeout(() => { ensureFrontendCardsRendered().catch(() => {}); }, 2500);
+                } else {
+                    console.info('[wbm] 第 ' + id + ' 条仍未重建，改用渲染事件再试一次');
+                    await ctx.eventSource.emit(ctx.eventTypes.CHARACTER_MESSAGE_RENDERED, id, 'wbm-guard');
+                }
+                return 1;
+            }
+        } catch (err) {
+            console.warn('[wbm] 补渲染失败', err);
+        } finally {
+            frontendGuardRunning = false;
+        }
+        return 0;
+    }
+
+    function bindFrontendCardGuard() {
+        const ctx = stCtx();
+        if (!ctx || !ctx.eventSource || !ctx.eventTypes) return;
+        if (window.__wbmFrontendGuardBound === VERSION) return;
+        window.__wbmFrontendGuardBound = VERSION;
+        const schedule = () => {
+            if (!featureOn('frontendGuard')) return;
+            clearTimeout(frontendGuardTimer);
+            frontendGuardTimer = setTimeout(() => { ensureFrontendCardsRendered().catch(() => {}); }, 5000);
+        };
+        ['CHARACTER_MESSAGE_RENDERED', 'CHAT_CHANGED', 'MESSAGE_SWIPED', 'GENERATION_ENDED'].forEach((name) => {
+            const type = ctx.eventTypes[name];
+            if (!type) return;
+            try { ctx.eventSource.on(type, schedule); } catch (err) { /* 宿主没这个事件就跳过 */ }
+        });
+        schedule();
+    }
+
+    /* ================= ② 对话补全预设：搜索 + 分组 + 删除 =================
+   ST 原生的预设下拉只能一行行翻，几十个预设很难找；这里在它旁边加一个「搜索」按钮，
+   窗口里按分组列出来，支持改名分组、两步确认删除。预设本身仍是 ST 的那一套
+   （#settings_preset_openai + data-preset-manager-*），我们只做入口，不另存数据。 */
+
+function talkPresetSelect() {
+    const sel = document.getElementById('settings_preset_openai');
+    return sel instanceof HTMLSelectElement ? sel : null;
+}
+
+function talkPresetGroups() {
+    if (!store.talkPresetGroups || typeof store.talkPresetGroups !== 'object') store.talkPresetGroups = {};
+    return store.talkPresetGroups;
+}
+
+function talkPresetNames(sel) {
+    return Array.from(sel.options).map((o) => String(o.textContent || '').trim()).filter((v) => !!v);
+}
+
+function talkPresetValue(name) {
+    const sel = talkPresetSelect();
+    if (!sel) return '';
+    const hit = Array.from(sel.options).find((o) => String(o.textContent || '').trim() === name);
+    return hit ? hit.value : '';
+}
+
+function talkPresetCurrentName() {
+    const sel = talkPresetSelect();
+    if (!sel) return '';
+    const opt = sel.options[sel.selectedIndex];
+    return opt ? String(opt.textContent || '').trim() : '';
+}
+
+function applyTalkPreset(name) {
+    const sel = talkPresetSelect();
+    if (!sel || !name) return false;
+    const value = talkPresetValue(name);
+    if (value === '') return false;
+    sel.value = value;
+    fireChange(sel);
+    return true;
+}
+
+function ensureTalkPresetButton() {
+    if (!featureOn('talkPreset')) {
+        const old = document.getElementById('wbm-talk-preset-btn');
+        if (old) old.remove();
+        return;
+    }
+    const sel = talkPresetSelect();
+    if (!sel) return;
+    if (document.getElementById('wbm-talk-preset-btn')) return;
+    const btn = el('button', 'menu_button wbm-talk-preset-btn');
+    btn.type = 'button';
+    btn.id = 'wbm-talk-preset-btn';
+    btn.title = '搜索 / 分组 / 删除对话补全预设';
+    btn.appendChild(el('i', 'fa-solid fa-sliders'));
+    btn.appendChild(el('span', 'wbm-talk-preset-btn-text', '管理'));
+    btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        console.info('[wbm] talk preset button clicked');
+        openTalkPresetPicker();
+    });
+    sel.insertAdjacentElement('afterend', btn);
+}
+
+function openTalkPresetPicker() {
+    const sel = talkPresetSelect();
+    if (!sel) return;
+    closeEditorPicker(true);
+    console.info('[wbm] talk preset picker open, options=' + sel.options.length);
+    const groups = talkPresetGroups();
+    const current = talkPresetCurrentName();
+    let names = talkPresetNames(sel);
+
+    let shell;
+    try {
+        shell = makePickerShell();
+    } catch (err) {
+        console.error('[wbm] talk preset shell failed', err);
+        return;
+    }
+    console.info('[wbm] talk preset shell ok ' + !!shell);
+    const { mask, sheet } = shell;
+    const grip = el('div', 'wbm-picker-grip');
+    const { head, input } = buildPickerHead('搜索预设名');
+    const titleRow = el('div', 'wbm-picker-titlerow');
+    const title = el('div', 'wbm-picker-title', '对话补全预设（当前：' + (current || '—') + '）');
+    const batchBtn = el('button', 'wbm-preset-tool wbm-talk-batch-btn', '批量…');
+    batchBtn.type = 'button';
+    titleRow.appendChild(title);
+    titleRow.appendChild(batchBtn);
+    const list = el('div', 'wbm-picker-list');
+    /* 批量模式的操作条：已选 N 个 | 全选 | 清空 | 分组 | 删除 | 退出 */
+    const batchBar = el('div', 'wbm-talk-batchbar');
+    batchBar.hidden = true;
+    const batchCount = el('span', 'wbm-talk-batch-count', '');
+    const mkBarBtn = (text, cls) => {
+        const b = el('button', 'wbm-preset-tool' + (cls ? ' ' + cls : ''), text);
+        b.type = 'button';
+        batchBar.appendChild(b);
+        return b;
+    };
+    batchBar.appendChild(batchCount);
+    const allBtn = mkBarBtn('全选');
+    const noneBtn = mkBarBtn('清空');
+    const groupAllBtn = mkBarBtn('分组');
+    const delAllBtn = mkBarBtn('删除');
+    const exitBtn = mkBarBtn('退出', 'wbm-talk-batch-exit');
+    /* 批量分组时填一次组名，一次套到所有已选行 */
+    const batchGroupRow = el('div', 'wbm-picker-row wbm-talk-batch-grouprow');
+    batchGroupRow.hidden = true;
+    const batchGroupInput = el('input', 'wbm-name-input-inline');
+    batchGroupInput.type = 'text';
+    batchGroupInput.placeholder = '组名（留空＝移出分组）';
+    const batchGroupOk = el('button', 'wbm-picker-action primary', '确定');
+    batchGroupOk.type = 'button';
+    const batchGroupCancel = el('button', 'wbm-picker-action', '取消');
+    batchGroupCancel.type = 'button';
+    batchGroupRow.appendChild(batchGroupInput);
+    batchGroupRow.appendChild(batchGroupOk);
+    batchGroupRow.appendChild(batchGroupCancel);
+    sheet.appendChild(grip);
+    sheet.appendChild(head);
+    sheet.appendChild(titleRow);
+    sheet.appendChild(batchBar);
+    sheet.appendChild(batchGroupRow);
+    sheet.appendChild(list);
+
+    let delArm = '';
+    let selectMode = false;
+    const picked = new Set();
+    /* 分组默认折叠，只展开「当前预设」所在的那一组（master 2026-10-21 要求）。
+       初始化延后到首次渲染：groupOf 定义在更下面，此处直接调用会 ReferenceError。 */
+    const collapsedGroups = new Set();
+    let collapsedReady = false;
+
+    const pickedInView = () => names.filter((n) => picked.has(n));
+
+    const syncBatchBar = () => {
+        batchBar.hidden = !selectMode;
+        batchGroupRow.hidden = !selectMode || batchGroupRow.dataset.open !== '1';
+        titleRow.hidden = selectMode;
+        const count = picked.size;
+        batchCount.textContent = '已选 ' + count + ' 个';
+        for (const b of [groupAllBtn, delAllBtn]) {
+            b.classList.toggle('wbm-busy', count === 0);
+        }
+        delAllBtn.textContent = count ? '删除 ' + count + ' 个' : '删除';
+    };
+
+    const enterBatch = () => {
+        selectMode = true;
+        collapsedGroups.clear();
+        /* 危险操作默认一条都不选（master 2026-10-20 定过的规矩） */
+        picked.clear();
+        syncBatchBar();
+        renderRows(input.value);
+    };
+
+    const exitBatch = () => {
+        selectMode = false;
+        picked.clear();
+        batchGroupRow.dataset.open = '';
+        syncBatchBar();
+        /* 退出批量后回到默认折叠（只展开当前预设那组），否则一手滑就摊开 88 行 */
+        collapsedGroups.clear();
+        collapsedReady = false;
+        renderRows(input.value);
+    };
+
+    const groupOf = (name) => String(groups[name] || '').trim();
+
+    const renderRows = (query) => {
+        list.innerHTML = '';
+        if (!collapsedReady) {
+            collapsedReady = true;
+            const currentGroup = groupOf(current);
+            for (const n of names) {
+                if (groupOf(n) !== currentGroup) collapsedGroups.add(groupOf(n));
+            }
+        }
+        const keyword = String(query || '').trim().toLowerCase();
+        const rows = names
+            .filter((name) => !keyword || String(name).toLowerCase().includes(keyword) || groupOf(name).toLowerCase().includes(keyword))
+            .sort((a, b) => {
+                const ga = groupOf(a) || '\uffff未分组';
+                const gb = groupOf(b) || '\uffff未分组';
+                return ga === gb ? String(a).localeCompare(String(b), 'zh-Hans-CN') : String(ga).localeCompare(String(gb), 'zh-Hans-CN');
+            });
+        let lastGroup = null;
+        let bucket = null;
+        const isOpen = (group) => {
+            if (keyword) return true;        /* 搜索时全部摊开，否则搜到的东西藏在折叠里 */
+            if (selectMode) return true;     /* 批量勾选时也要看得见 */
+            return !collapsedGroups.has(group);
+        };
+        rows.forEach((name) => {
+            const group = groupOf(name);
+            if (group !== lastGroup) {
+                lastGroup = group;
+                const open = isOpen(group);
+                const head = el('div', 'wbm-picker-group-label wbm-talk-group-toggle');
+                head.dataset.group = group || '';
+                head.appendChild(el('i', 'fa-solid ' + (open ? 'fa-caret-down' : 'fa-caret-right')));
+                head.appendChild(el('span', 'wbm-talk-group-name', group || '未分组'));
+                const total = rows.filter((n) => groupOf(n) === group).length;
+                head.appendChild(el('span', 'wbm-talk-group-count', String(total)));
+                head.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (keyword) return;
+                    const key = head.dataset.group;
+                    if (collapsedGroups.has(key)) collapsedGroups.delete(key);
+                    else collapsedGroups.add(key);
+                    renderRows(input.value);
+                });
+                list.appendChild(head);
+                bucket = el('div', 'wbm-talk-group-body');
+                bucket.hidden = !open;
+                list.appendChild(bucket);
+            }
+            const row = el('div', 'wbm-picker-row wbm-talk-preset-row');
+            if (name === current) row.classList.add('active');
+            if (selectMode && picked.has(name)) row.classList.add('wbm-picked');
+            row.dataset.name = name;
+            if (selectMode) {
+                const pick = el('span', 'wbm-swipe-pick' + (picked.has(name) ? ' checked' : ''));
+                pick.appendChild(el('i', 'fa-solid fa-check'));
+                row.appendChild(pick);
+            }
+            row.appendChild(el('span', 'wbm-picker-name', name === current ? name + '（当前）' : name));
+
+            const tools = el('div', 'wbm-preset-tools');
+            const groupBtn = el('button', 'wbm-preset-tool', '分组');
+            groupBtn.type = 'button';
+            groupBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                startGroupEdit(row, name);
+            });
+            const delBtn = el('button', 'wbm-preset-tool' + (delArm === name ? ' armed' : ''), delArm === name ? '确认删除' : '删除');
+            delBtn.type = 'button';
+            delBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (delArm !== name) {
+                    delArm = name;
+                    renderRows(input.value);
+                    return;
+                }
+                delArm = '';
+                deleteTalkPreset(name);
+            });
+            tools.appendChild(groupBtn);
+            tools.appendChild(delBtn);
+            row.appendChild(tools);
+
+            row.addEventListener('click', (event) => {
+                if (event.target.closest('.wbm-preset-tools') || event.target.closest('input')) return;
+                if (selectMode) {
+                    if (picked.has(name)) picked.delete(name);
+                    else picked.add(name);
+                    syncBatchBar();
+                    renderRows(input.value);
+                    return;
+                }
+                applyTalkPreset(name);
+                closeEditorPicker();
+                toast('ok', '已切换到预设「' + name + '」');
+            });
+            (bucket || list).appendChild(row);
+        });
+        if (!rows.length) list.appendChild(el('div', 'wbm-picker-empty', '没有匹配的预设'));
+    };
+
+    const startGroupEdit = (row, name) => {
+        row.innerHTML = '';
+        const field = el('input', 'wbm-name-input-inline');
+        field.type = 'text';
+        field.value = groupOf(name);
+        field.placeholder = '分组名（留空＝未分组）';
+        field.dataset.role = 'talk-group-name';
+        const ok = el('button', 'wbm-picker-action primary', '确定');
+        ok.type = 'button';
+        const cancel = el('button', 'wbm-picker-action', '取消');
+        cancel.type = 'button';
+        const commit = () => {
+            const value = String(field.value || '').trim();
+            const map = talkPresetGroups();
+            if (value) map[name] = value;
+            else delete map[name];
+            persistStore();
+            /* 就地重画、窗口保持打开：分组往往要连着给好几行做，
+               关掉再打开会丢掉搜索词与滚动位置（master 2026-10-22 指出） */
+            const keepTop = list.scrollTop;
+            collapsedGroups.delete(value);
+            renderRows(input.value);
+            list.scrollTop = keepTop;
+            toast('info', value ? '「' + name + '」已归到「' + value + '」' : '「' + name + '」已移出分组');
+        };
+        ok.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); commit(); });
+        cancel.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); renderRows(input.value); });
+        field.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') { event.preventDefault(); commit(); }
+            if (event.key === 'Escape') { event.preventDefault(); renderRows(input.value); }
+        });
+        row.appendChild(el('span', 'wbm-picker-name', name + ' →'));
+        row.appendChild(field);
+        row.appendChild(ok);
+        row.appendChild(cancel);
+        setTimeout(() => field.focus(), 30);
+    };
+
+    /* 删一个预设文件，并把宿主下拉里的同名 option 摘掉（批量删除也走这里）。
+       返回 true 表示服务器确实删掉了。 */
+    const removePresetFile = async (name) => {
+        const ctx = SillyTavern.getContext();
+        try {
+            const res = await fetch('/api/presets/delete', {
+                method: 'POST',
+                headers: ctx.getRequestHeaders(),
+                body: JSON.stringify({ apiId: 'openai', name }),
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+        } catch (err) {
+            console.error('[wbm] 删除预设失败', name, err);
+            return false;
+        }
+        const list = talkPresetSelect();
+        if (list) {
+            const opt = Array.from(list.options).find((o) => String(o.textContent || '').trim() === name);
+            if (opt) {
+                const wasSelected = opt.selected;
+                opt.remove();
+                if (wasSelected && list.options.length) {
+                    list.selectedIndex = 0;
+                    list.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }
+        }
+        return true;
+    };
+
+    const deleteTalkPreset = async (name) => {
+        /* 同样保持窗口打开：删完一个接着删下一个，不用重新找入口 */
+        const keepTop = list.scrollTop;
+        const ok = await removePresetFile(name);
+        if (!ok) {
+            toast('err', '删除预设「' + name + '」失败，请刷新后再试');
+            return;
+        }
+        delete talkPresetGroups()[name];
+        persistStore();
+        const hostSel = talkPresetSelect();
+        if (hostSel) names = talkPresetNames(hostSel);
+        picked.delete(name);
+        renderRows(input.value);
+        list.scrollTop = keepTop;
+        toast('ok', '已删除预设「' + name + '」');
+    };
+
+    batchBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (selectMode) exitBatch();
+        else enterBatch();
+    });
+    allBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        for (const n of names) picked.add(n);
+        syncBatchBar();
+        renderRows(input.value);
+    });
+    noneBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        picked.clear();
+        syncBatchBar();
+        renderRows(input.value);
+    });
+    exitBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        exitBatch();
+    });
+    groupAllBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!picked.size) { toast('info', '先勾选要分组的预设'); return; }
+        const open = batchGroupRow.dataset.open === '1';
+        batchGroupRow.dataset.open = open ? '' : '1';
+        batchGroupInput.value = open ? '' : groupOf(names.find((n) => picked.has(n)) || '');
+        syncBatchBar();
+        if (!open) setTimeout(() => batchGroupInput.focus(), 30);
+    });
+    batchGroupCancel.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        batchGroupRow.dataset.open = '';
+        syncBatchBar();
+    });
+    batchGroupOk.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const value = String(batchGroupInput.value || '').trim();
+        const map = talkPresetGroups();
+        let n = 0;
+        for (const name of picked) {
+            if (value) map[name] = value;
+            else delete map[name];
+            n += 1;
+        }
+        persistStore();
+        batchGroupRow.dataset.open = '';
+        toast('ok', value ? '已把 ' + n + ' 个预设移到「' + value + '」' : '已把 ' + n + ' 个预设移出分组');
+        exitBatch();
+    });
+    batchGroupInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); batchGroupOk.click(); }
+        if (event.key === 'Escape') { event.preventDefault(); batchGroupCancel.click(); }
+    });
+    delAllBtn.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const targets = pickedInView();
+        if (!targets.length) { toast('info', '先勾选要删除的预设'); return; }
+        if (targets.length >= names.length) { toast('warning', '至少要保留一个预设'); return; }
+        delAllBtn.classList.add('wbm-busy');
+        try {
+            const ctx = SillyTavern.getContext();
+            const go = await ctx.callGenericPopup(
+                '删除已选的 ' + targets.length + ' 个预设？删除后无法恢复。',
+                ctx.POPUP_TYPE.CONFIRM, '', { okButton: '删除', cancelButton: '取消' });
+            if (go !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
+            let okCount = 0;
+            const failed = [];
+            for (const name of targets) {
+                const ok = await removePresetFile(name);
+                if (ok) okCount += 1;
+                else failed.push(name);
+            }
+            toast(failed.length ? 'warning' : 'ok',
+                '删除完成：成功 ' + okCount + ' 个' + (failed.length ? '，失败 ' + failed.length + ' 个（' + failed.join('、') + '）' : ''));
+            /* 列表按宿主下拉重新取一遍，否则删掉的行还挂在浮层上 */
+            names = talkPresetNames(sel);
+            picked.clear();
+            exitBatch();
+        } finally {
+            delAllBtn.classList.remove('wbm-busy');
+        }
+    });
+
+    input.addEventListener('input', () => renderRows(input.value));
+    renderRows('');
+    document.documentElement.appendChild(mask);
+    console.info('[wbm] talk preset mask in dom ' + mask.isConnected + ' rows=' + list.childElementCount);
+    setTimeout(() => input.focus(), 40);
+}
+
+/* ================= ③ 提示词：插入到指定位置 =================
+   原生「插入」把提示词 unshift 到列表最前面（PromptManager.js:961 appendPrompt），
+   想放到正文后面只能一条条拖回去。这里在插入键旁边加一个按钮：
+   选一个位置，一次性把它插到那里（并保存、重绘）。 */
+
+let oaiSettingsCache = null;
+
+async function getOaiSettings() {
+    if (oaiSettingsCache) return oaiSettingsCache;
+    try {
+        const mod = await import('/scripts/openai.js');
+        oaiSettingsCache = mod && mod.oai_settings ? mod.oai_settings : null;
+    } catch (err) {
+        console.warn('[wbm] 拿不到 oai_settings', err);
+        oaiSettingsCache = null;
+    }
+    return oaiSettingsCache;
+}
+
+function promptNameOf(settings, id) {
+    const prompts = (settings && settings.prompts) || [];
+    const hit = prompts.find((p) => p && p.identifier === id);
+    return hit ? (hit.name || id) : id;
+}
+
+function activeOrderList(settings, id) {
+    const lists = (settings && settings.prompt_order) || [];
+    if (!lists.length) return null;
+    const hit = lists.find((l) => l && Array.isArray(l.order) && l.order.some((e) => e && e.identifier === id));
+    if (hit) return hit;
+    const nonEmpty = lists.find((l) => l && Array.isArray(l.order) && l.order.length);
+    return nonEmpty || lists[0];
+}
+
+/* 找出「屏幕上正在显示的那份顺序」：优先用 DOM 里 li 的 data-pm-identifier 序列去匹配，
+   因为 settings.prompt_order 是按角色/预设分组的数组，光看第一个元素很可能改到别的组。 */
+function orderListForDisplay(settings) {
+    const lists = (settings && settings.prompt_order) || [];
+    if (!lists.length) return null;
+    const domIds = [...document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]')]
+        .map((li) => li.getAttribute('data-pm-identifier'));
+    if (domIds.length) {
+        const exact = lists.find((l) => l && Array.isArray(l.order)
+            && l.order.length === domIds.length
+            && l.order.every((e, i) => e && e.identifier === domIds[i]));
+        if (exact) return exact;
+    }
+    return lists[0];
+}
+
+/* 一次性移动：把 moving 移到 target 之后（targetId 为 null = 移到最末尾）。
+   位置用 identifier 定位，不再用 DOM 下标——2026-10-22 master 报的两个错都是下标漂移：
+   从后往前移会多插一位（1,2,4,3,5），移完还不退出移动态。 */
+async function movePromptAfter(movingId, targetId) {
+    const settings = await getOaiSettings();
+    if (!settings) return { ok: false, why: 'no-settings' };
+    const list = orderListForDisplay(settings);
+    if (!list || !Array.isArray(list.order)) return { ok: false, why: 'no-order' };
+
+    const order = list.order;
+    const from = order.findIndex((e) => e && e.identifier === movingId);
+    if (from < 0) return { ok: false, why: 'moving-missing' };
+    const [entry] = order.splice(from, 1);
+
+    let to;
+    if (!targetId) {
+        to = order.length;
+    } else {
+        /* 注意：这一步是在「已经移除 moving」之后的数组里找目标，所以 to = t + 1 就是「目标之后」 */
+        const t = order.findIndex((e) => e && e.identifier === targetId);
+        to = t < 0 ? order.length : t + 1;
+    }
+    order.splice(to, 0, entry);
+
+    /* 一次操作结束就退出移动态：底部下拉复位、高亮清掉、↓ 变灰 */
+    const sel = document.getElementById('completion_prompt_manager_footer_append_prompt');
+    if (sel && sel.value) {
+        sel.value = '';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    syncPromptBar();
+
+    const ctx = window.SillyTavern && window.SillyTavern.getContext ? window.SillyTavern.getContext() : null;
+    if (ctx && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+
+    /* 视觉：直接把这一行搬到目标行后面，不用等宿主 debounce 重绘 */
+    const selId = (v) => '#completion_prompt_manager_list li[data-pm-identifier="' + CSS.escape(v) + '"]';
+    const item = document.querySelector(selId(movingId));
+    const targetLi = targetId ? document.querySelector(selId(targetId)) : null;
+    if (item && item.parentElement) {
+        if (targetLi) targetLi.insertAdjacentElement('afterend', item);
+        else item.parentElement.appendChild(item);
+        item.classList.add('wbm-pm-flash');
+        setTimeout(() => item.classList.remove('wbm-pm-flash'), 900);
+    }
+    return { ok: true };
+}
+
+/* 1.3.44 性能：jQuery UI 每次 setOption 都会重建 items 集合（内部 .find().add().sort()，
+   201 行时实测 3 秒白烧约 190ms CPU）。这里统一「先读实例状态、一致就什么都不动」，
+   只在不一致时（宿主重绘后）才写一次。 */
+function wbmSortableInstance() {
+    const $ = window.jQuery;
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (!$ || !list || !$.fn || !$.fn.sortable) return null;
+    const $list = $(list);
+    const inst = $list.data('ui-sortable') || $list.data('sortable');
+    return inst ? { $list: $list, inst: inst } : null;
+}
+
+/* 桌面端把拖拽限定在 ☰ 那根把手上（宿主默认 handle:null，整行都是把手，
+   delay 只有 30ms，所以点开关/点名字稍微一动就被判成拖拽，master 2026-10-22 报的）。
+   手机端宿主本来就是 .drag-handle，这里统一一次。 */
+function pinPromptDragHandle() {
+    const $ = window.jQuery;
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (!$ || !list || !$.fn || !$.fn.sortable) return false;
+    /* 1.3.15：桌面端不钉把手（与 TT 一致，整行可拖），只有触屏才用 .drag-handle；
+       拖拽判停(distance)与 cancel 由 hardenPromptSortable 负责。
+       2026-10-22 事故：这三个函数曾被之前的补丁插进了本函数的体内，导致全部不可见
+       （控制台一直报 hardenPromptSortable is not defined），这里把函数体恢复干净。 */
+    /* 2026-10-22 master：「为什么不彻底覆盖掉滑动功能？」
+       拖拽整个去掉——手机、电脑、排序态都不留。☰ 由 CSS 隐藏，sortable 直接 disable，
+       以后只有两条路：每行 ↑↓ 微调一格，或勾选后点 ↓ 批量落位。 */
+    const $list = $(list);
+    const inst = $list.data('ui-sortable') || $list.data('sortable');
+    if (!inst) return false;
+    /* 1.3.44 性能：已经钉好了就直接返回，别再 setOption（每次都会重建 items 集合）。 */
+    if (inst.options && inst.options.disabled === true && inst.options.handle === '.wbm-never-drag') return true;
+    try {
+        if (typeof inst.option === 'function') {
+            inst.option('disabled', true);
+            inst.option('handle', '.wbm-never-drag');
+        }
+    } catch (err) { return false; }
+    return true;
+}
+
+/* ---------------------------------------------------------------------------
+   2026-10-22 master 报「电脑端 ST 点星号，条目被瞬间拖起、瞬间消失，TT 却没这事」。
+   ST 的 sortupdate 回调把 DOM 里的 identifier 直接 map 回 prompt_order 里的对象，
+   只要某个 identifier 不在当前这份 prompt_order 里（我们早先移动条目时弄丢过、
+   或者某条是新加的还没进 order），map 结果就是 undefined，写回后那一项变成 null，
+   宿主重绘时该行「消失」。
+   ①补全：任何一次拖拽之前，把 DOM 里有、order 里没有的 identifier 补进去；
+   ②判停：给宿主的 sortable 加 distance（移动超过 10px 才算拖拽），单击/轻微抖动不再触发 sortupdate。
+   --------------------------------------------------------------------------- */
+function ensurePromptOrderComplete() {
+    const settings = oaiSettingsCache;
+    if (!settings) return false;
+    const list = orderListForDisplay(settings);
+    if (!list || !Array.isArray(list.order)) return false;
+    const known = new Set(list.order.filter(Boolean).map((entry) => entry.identifier));
+    const rows = [...document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]')];
+    let changed = false;
+    for (const li of rows) {
+        const id = li.getAttribute('data-pm-identifier');
+        if (!id || known.has(id)) continue;
+        const disabled = li.classList.contains('completion_prompt_manager_prompt_disabled')
+            || li.classList.contains('prompt_manager_prompt_disabled');
+        list.order.push({ identifier: id, enabled: !disabled });
+        known.add(id);
+        changed = true;
+    }
+    const before = list.order.length;
+    list.order = list.order.filter((entry) => entry && entry.identifier);
+    if (list.order.length !== before) changed = true;
+    if (changed) {
+        try {
+            const ctx = SillyTavern.getContext();
+            if (ctx && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+        } catch (err) {
+            console.warn('[wbm] 补全 prompt_order 后保存失败', err);
+        }
+        console.log('[wbm] prompt_order 已补全缺失条目，避免拖拽后出现空洞');
+    }
+    return changed;
+}
+
+/* 以 DOM 顺序为准重建当前这份 prompt_order（拖拽后兜底，专治 ST 把项写成 null）。 */
+function repairPromptOrderFromDom() {
+    const settings = oaiSettingsCache;
+    if (!settings) return false;
+    const list = orderListForDisplay(settings);
+    if (!list || !Array.isArray(list.order)) return false;
+    const rows = [...document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]')];
+    if (!rows.length) return false;
+    const byId = new Map();
+    for (const entry of list.order) if (entry && entry.identifier) byId.set(entry.identifier, entry);
+    let changed = false;
+    const next = rows.map((li) => {
+        const id = li.getAttribute('data-pm-identifier');
+        const hit = byId.get(id);
+        if (hit) {
+            const disabled = li.classList.contains('completion_prompt_manager_prompt_disabled')
+                || li.classList.contains('prompt_manager_prompt_disabled');
+            if (hit.enabled === disabled) { hit.enabled = !disabled; changed = true; }
+            return hit;
+        }
+        changed = true;
+        const disabled = li.classList.contains('completion_prompt_manager_prompt_disabled')
+            || li.classList.contains('prompt_manager_prompt_disabled');
+        return { identifier: id, enabled: !disabled };
+    });
+    const hasHoles = list.order.some((entry) => !entry || !entry.identifier);
+    if (hasHoles) changed = true;
+    if (!changed && list.order.length === next.length) return false;
+    list.order = next;
+    try {
+        const ctx = SillyTavern.getContext();
+        if (ctx && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+        console.log('[wbm] 已按 DOM 顺序重建 prompt_order（' + next.length + ' 条）');
+    } catch (err) {
+        console.warn('[wbm] 重建 prompt_order 后保存失败', err);
+    }
+    return true;
+}
+
+function hardenPromptSortable() {
+    const $ = window.jQuery;
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (!$ || !list || !$.fn || !$.fn.sortable) return false;
+    const $list = $(list);
+    const inst = $list.data('ui-sortable') || $list.data('sortable');
+    if (!inst) return false;
+    /* cancel 覆盖「控件区 + 名字区（星号、检视链接）+ 计数」：宿主桌面端 handle 为 null（整行都能拖），
+       点星号/名字稍微一动就被判成拖拽，表现就是「点一下条目就消失」。 */
+    const wantCancel = '.wbm-pm-seq, .wbm-pm-box, .wbm-pm-insert, .wbm-prompt-bar, .prompt_manager_prompt_controls, .prompt_manager_prompt_controls *, .completion_prompt_manager_prompt_name, .completion_prompt_manager_prompt_name *, .prompt_manager_prompt_name, .prompt_manager_prompt_name *, .prompt_manager_prompt_tokens, input, textarea, select, button, a';
+    /* 1.3.44 性能：先比对实例上真实生效的选项，全都对得上就一次 setOption 都不发。
+       （jQuery UI 每次 setOption 都会重建内部 items 集合并做 DOM 顺序排序，
+       201 行时 3 秒空闲实测 compareDocumentPosition 138.9ms + uniqueSort 17.4ms。） */
+    /* 1.3.47：拖拽已经彻底下线（master 2026-10-22「为什么不彻底覆盖掉滑动功能？」），
+       所以无论排序态还是正常态，sortable 的目标状态都只有一个：关掉、把手换成永远匹配不到的选择器。
+       以前排序态会把它重新 enable 并换成 .drag-handle，于是每次进出排序态都要发好几轮 setOption
+       （实测 6 次进出 +9.3MB / +206 监听器），而拖拽其实一次也用不上。 */
+    const opt = inst.options || {};
+    const wantHandle = '.wbm-never-drag';
+    if (opt.disabled !== true || opt.handle !== wantHandle || opt.cancel !== wantCancel) {
+        try {
+            if (opt.disabled !== true) $list.sortable('disable');
+            if (opt.handle !== wantHandle) $list.sortable('option', 'handle', wantHandle);
+            if (opt.cancel !== wantCancel) $list.sortable('option', 'cancel', wantCancel);
+            $list.data('wbmSortDisabled', true);
+        } catch (err) {
+            return false;
+        }
+    }
+    if (!$list.data('wbmSortHooked')) {
+        $list.data('wbmSortHooked', true);
+        $list.on('sortstart', () => { ensurePromptOrderComplete(); });
+        $list.on('sortupdate', () => {
+            /* 宿主自己的 sortupdate 会先跑：它用 idToObjectMap 把 DOM 顺序映射回 order，
+               只要有一个 identifier 不在那份 order 里，结果就是 undefined → 写成 null →
+               重绘时那一行「消失」（ST 1.18 的已知缺陷，TT 新版改用
+               resolvePromptOrderFromDomIdentifiers 并抛错）。我们在它之后重建一遍：
+               以 DOM 顺序为准，把每一项还原成 {identifier, enabled}，写回并保存。 */
+            window.setTimeout(() => {
+                try { repairPromptOrderFromDom(); } catch (err) { console.warn('[wbm] 修复 prompt_order 失败', err); }
+                ensurePromptOrderComplete();
+            }, 0);
+        });
+    }
+    return true;
+}
+
+/* 宿主每次重绘提示词列表都会重建 sortable（distance 回到 1、cancel 只剩 input），
+   所以每次按下都在 document 捕获阶段抢先加固：jQuery UI 在 mousedown 里读选项，
+   捕获阶段先跑，能保证「这一次按下」就是 10px 判停 + 名字/控件区不参与拖拽。 */
+function hookPromptSortableCapture() {
+    if (window.__wbmSortCapture === (window.__wbmBoot && window.__wbmBoot.build)) return;
+    window.__wbmSortCapture = (window.__wbmBoot && window.__wbmBoot.build) || '1';
+    /* 拖拽的唯一合法入口：排序态下的 ☰。
+       其它任何地方按下，都在 document 捕获阶段把事件截住 —— 宿主的 sortable 监听挂在列表元素上，
+       事件到不了列表，它就永远抓不起这一行。之前靠 sortable('disable') / handle / cancel 三件套都没用，
+       因为宿主每次重绘都会重新 .sortable({...})，状态总被覆盖（master 2026-10-22 指出方向：
+       「你明明把拖拽功能关闭了，但不在排序状态下点击星号还是能抓起，你没发现你一直改错了方向吗？」）。 */
+    const block = (event) => {
+        const target = event.target;
+        if (!target || !target.closest) return;
+        if (!target.closest('#completion_prompt_manager_list')) return;
+        /* 1.3.37 性能：这里以前每按一下就 hardenPromptSortable() + ensurePromptOrderComplete()
+           （读整份 prompt_order、扫 150 行 DOM），还排一个 400ms 的 repairPromptOrderFromDom，
+           它一旦判出差异就 saveSettingsDebounced → 宿主整表重绘。手机上每滑一下都要来一轮，
+           就是 master 报的「滑动/移动条目卡顿」的主要来源。拖拽已整体下线，ST 把项写成 null
+           只可能由 sortupdate 产生，那条路已经修了，所以这里只做「事件截住」一件事。 */
+        /* 拖拽已整体下线（2026-10-22 master 定）：任何平台、任何状态都不放行拖拽起点。 */
+        event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    };
+    document.addEventListener('mousedown', block, true);
+    document.addEventListener('touchstart', block, { capture: true, passive: true });
+    /* 兜底：万一宿主在别的时机把拖拽打开了，一有拖动动作就立刻关掉并把顺序按数据复位。 */
+    if (!window.__wbmDragKill) {
+        window.__wbmDragKill = true;
+        const kill = () => {
+            try {
+                const list = document.getElementById('completion_prompt_manager_list');
+                const inst = list && window.jQuery ? window.jQuery(list).data('ui-sortable') : null;
+                if (inst && typeof inst.option === 'function' && inst.options && inst.options.disabled === false) {
+                    inst.option('disabled', true);
+                    console.warn('[wbm] 宿主重开了拖拽，已再次关闭');
+                }
+            } catch (err) { /* 忽略 */ }
+        };
+        document.addEventListener('mousedown', kill, true);
+        document.addEventListener('touchstart', kill, { capture: true, passive: true });
+    }
+}
+
+/* 每行一个「↓」：把底部下拉里选中的那条插到这一行之后（方案 A，一步到位）。
+   底部另给一行提示：「当前移动：X · 点任意行下方的 ↓」，以及「插到最末尾」。 */
+let wbmBarNode = null;
+let wbmAppendBarNode = null;
+
+/* 1.3.49：宿主每次点开关都会 renderPromptManager()，它把 #completion_prompt_manager
+   整块 innerHTML='' 清掉，我们的工具条与插入搜索行也跟着消失。以前要等 620ms 的
+   slowWork 才补回来，这期间列表整体上移 45px——master 报的「开关卡顿、界面上下跳、
+   点快了还开关错条目」就是它。这里缓存节点引用，被清掉当场插回去（同步，不等 rAF）。 */
+function ensureDockMounted() {
+    /* 1.3.60 修：静音或关掉提示词模块时，观察者回调仍会把缓存节点插回去（实测总开关关了
+       工具条又出现）。这里先看开关状态。 */
+    if (!enhancementsOn() || !featureOn('promptMgr')) return;
+    let mounted = false;
+    const host = document.getElementById('completion_prompt_manager');
+    if (host && wbmBarNode && !wbmBarNode.isConnected) {
+        host.insertBefore(wbmBarNode, host.firstElementChild || null);
+        mounted = true;
+        try { syncPromptBar(); } catch (err) { /* 图标没同步上也无所谓 */ }
+    }
+    const foot = document.querySelector('.completion_prompt_manager_footer');
+    if (foot && foot.parentElement && wbmAppendBarNode && !wbmAppendBarNode.isConnected) {
+        foot.parentElement.insertBefore(wbmAppendBarNode, foot);
+        mounted = true;
+    }
+    return mounted;
+}
+
+function ensurePromptInsertButton() {
+    if (!featureOn('promptMgr')) return;
+    /* 1.3.14：旧的「下拉选一条 + 每行一个 ↓」已下线，改由「调整排序」弹窗承担（master 2026-10-22 决定）。
+       1.3.15：这里只剩触屏端的把手规则 + 一个可见的版本号。 */
+    pinPromptDragHandle();
+    try {
+        const footer = document.querySelector('.completion_prompt_manager_footer');
+        if (footer && !footer.querySelector('.wbm-pm-ver')) {
+            const tag = el('span', 'wbm-pm-ver', '排序 ' + VERSION);
+            footer.appendChild(tag);
+        }
+    } catch (err) { /* 版本号只是给人看的，失败不影响功能 */ }
+    try { ensurePromptAppendTools(); } catch (err) { console.warn('[wbm] 插入提示词工具失败', err); }
+    /* 已经挂在管理器顶部的那条就直接复用，别重建。 */
+    if (document.querySelector('.wbm-prompt-bar')) {
+        syncPromptBar();
+        return;
+    }
+    if (wbmBarNode) {
+        if (!wbmBarNode.isConnected) ensureDockMounted();
+        if (wbmBarNode.isConnected) { syncPromptBar(); return; }
+    }
+    for (const footer of document.querySelectorAll('.completion_prompt_manager_footer')) {
+        if (footer.querySelector('.wbm-prompt-bar')) continue;
+        const chain = footer.querySelector('.fa-chain');
+        if (!chain) continue;
+        const bar = el('div', 'wbm-prompt-bar');
+        wbmBarNode = bar;
+        /* 1.3.37：「把勾选的条目移至最末尾」已下线（master 2026-10-22：
+           「不生效，而且也没必要，干脆砍掉」）。工具条只剩排序键 + 已选计数。 */
+        const sortBtn = el('button', 'wbm-prompt-sortbtn');
+    sortBtn.appendChild(wbmIcon('sort'));
+        sortBtn.type = 'button';
+        sortBtn.title = '调整排序';
+        sortBtn.setAttribute('aria-label', sortBtn.title);
+        sortBtn.addEventListener('mousedown', (event) => event.stopPropagation());
+        sortBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            togglePmSort();
+        });
+        /* 1.3.38：靠左的「复制到其它预设」入口（master 定的位置：左边这个键，
+           右边仍然是进入/退出调整排序）。 */
+        const copyBtn = el('button', 'wbm-prompt-copybtn');
+        copyBtn.appendChild(wbmIcon('copy'));
+        copyBtn.type = 'button';
+        copyBtn.title = '复制勾选的条目到其它预设';
+        copyBtn.setAttribute('aria-label', copyBtn.title);
+        copyBtn.addEventListener('mousedown', (event) => event.stopPropagation());
+        copyBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            Promise.resolve(openCopyToPresetPicker()).catch((err) => {
+                console.error('[wbm] copy picker failed', err);
+                toast('err', '打开复制窗口失败');
+            });
+        });
+        const countNode = el('span', 'wbm-prompt-count');
+        countNode.style.display = 'none';
+        bar.appendChild(copyBtn);
+        /* 1.3.40：放大镜键开/关查找行。整条栏在侧栏里只有 243px 宽，
+           按钮行里塞输入框只剩 47px，所以查找行单独占第二行（平时收起，不占高度）。 */
+        const findBtn = el('button', 'wbm-prompt-findbtn');
+        findBtn.appendChild(wbmIcon('search'));
+        findBtn.type = 'button';
+        findBtn.title = '查找条目';
+        findBtn.setAttribute('aria-label', findBtn.title);
+        findBtn.addEventListener('mousedown', (event) => event.stopPropagation());
+        findBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleFindTools();
+        });
+        bar.appendChild(findBtn);
+        bar.appendChild(countNode);
+        bar.appendChild(sortBtn);
+        bar.appendChild(wbmBuildFindTools());
+        /* 1.3.25：工具条常驻管理器顶部；1.3.26：不再每次重建（重建会把按钮文案打回「调整排序」，
+           就是 master 报的「点进排序立刻又变回进入排序」）。 */
+        const host = document.getElementById('completion_prompt_manager') || (chain.closest('#completion_prompt_manager_list') || chain).parentElement;
+        const older = [...document.querySelectorAll('.wbm-prompt-bar')].filter((b) => b !== bar);
+        older.forEach((b) => b.remove());
+        if (host && bar.parentElement !== host) host.insertBefore(bar, host.firstElementChild || null);
+    }
+    pinPromptDragHandle();
+    syncPromptBar();
+}
+
+function movingPromptId() {
+    const sel = document.getElementById('completion_prompt_manager_footer_append_prompt');
+    return sel ? sel.value : '';
+}
+
+function syncPromptBar() {
+    const id = movingPromptId();
+    const settings = oaiSettingsCache;
+    const name = (id && settings) ? promptNameOf(settings, id) : id;
+    const shortName = name && name.length > 26 ? name.slice(0, 26) + '…' : name;
+    for (const bar of document.querySelectorAll('.wbm-prompt-bar')) {
+        const sortBtn = bar.querySelector('.wbm-prompt-sortbtn');
+        if (sortBtn) {
+            /* 纯图标 + title：排序态是 ✕（退出），平时是 ↑↓（进入）。
+               1.3.37：状态没变就不动 DOM——以前每次 sync 都拆掉 SVG 重画一遍。 */
+            const mode = pmSortOn ? 'exit' : 'sort';
+            if (sortBtn.dataset.wbmIcon !== mode) {
+                sortBtn.dataset.wbmIcon = mode;
+                sortBtn.classList.toggle('wbm-on', pmSortOn);
+                sortBtn.title = pmSortOn ? '退出调整排序' : '调整排序';
+                sortBtn.setAttribute('aria-label', sortBtn.title);
+                while (sortBtn.firstChild) sortBtn.removeChild(sortBtn.firstChild);
+                sortBtn.appendChild(wbmIcon(mode));
+            }
+        }
+        const count = bar.querySelector('.wbm-prompt-count');
+        if (count) {
+            const want = pmSortOn ? String(pmSortSel.size) : '';
+            if (count.textContent !== want) count.textContent = want;
+            const disp = pmSortOn ? '' : 'none';
+            if (count.style.display !== disp) count.style.display = disp;
+        }
+        bar.querySelectorAll('.wbm-prompt-bar-hint').forEach((n) => n.remove());
+    }
+    const sel = document.getElementById('completion_prompt_manager_footer_append_prompt');
+    if (sel && !sel.dataset.wbmHooked) {
+        sel.dataset.wbmHooked = '1';
+        sel.addEventListener('change', () => setTimeout(() => {
+            syncPromptBar();
+            decoratePromptRows();
+        }, 30));
+    }
+    decoratePromptRows();
+}
+/* 微调一格（不进入排序态）：每行名字后面一对 ↑↓，点一次换一位、立刻保存。
+   master 2026-10-22：「如果我只是想要微调选项上下位置，也要进入专门的排序模式吗？
+   滑动功能被取消了，为什么没有个按键可以方便我上下移动一位？」 */
+async function movePromptStep(id, dir) {
+    try {
+        const settings = oaiSettingsCache || await getOaiSettings();
+        const list = orderListForDisplay(settings);
+        if (!list || !Array.isArray(list.order)) return false;
+        const idx = list.order.findIndex((entry) => entry && entry.identifier === id);
+        if (idx < 0) return false;
+        const j = idx + dir;
+        if (j < 0 || j >= list.order.length) return false;
+        const [entry] = list.order.splice(idx, 1);
+        list.order.splice(j, 0, entry);
+        const rows = pmSortTargets();
+        const li = rows.find((r) => r.getAttribute('data-pm-identifier') === id);
+        if (li && li.parentNode) {
+            const cur = rows.indexOf(li);
+            if (dir > 0) li.parentNode.insertBefore(li, rows[cur + 2] || null);
+            else li.parentNode.insertBefore(li, rows[cur - 1] || null);
+            li.classList.add('wbm-pm-flash');
+            setTimeout(() => li.classList.remove('wbm-pm-flash'), 900);
+        }
+        SillyTavern.getContext().saveSettingsDebounced();
+        /* 1.3.37 性能：以前这里把签名清空再全量 decoratePromptRows()——149 行重扫 + 4~6 次
+           querySelector/行，一次换位就几十毫秒。现在只动受影响的那几行。
+           换一位只交换相邻两行的序号与首末箭头，其余行完全不变。 */
+        const after = pmSortTargets();
+        decoratePromptRows.lastSignature = after.map((r) => r.getAttribute('data-pm-identifier')).join('|') + (pmSortOn ? '#S' : '#N');
+        decoratePromptRows.mode = pmSortOn;
+        if (pmSortOn) {
+            const hot = new Set([j - 1, j, j + 1, j + 2].filter((n) => n >= 0 && n < after.length));
+            for (const n of hot) {
+                const row = after[n];
+                const p = wbmRowParts(row);
+                const want = String(n + 1);
+                if (p.seq && p.seq.textContent !== want) p.seq.textContent = want;
+                setRowArrows(row, n, after.length);
+            }
+        }
+        return true;
+    } catch (err) {
+        console.warn('[wbm] 微调失败', err);
+        return false;
+    }
+}
+/* 一枚 ↑/↓：外壳是 span（CSS 尺寸/悬停都挂在外壳上），里面是自绘 SVG。
+   1.3.36 之前这里写的是 <span class="fa-solid fa-arrow-up">，宿主那份裁剪过的 Font Awesome
+   没有 .fa-arrow-up，浏览器就画「带叉的空框」——master 2026-10-22 报的正是这个。 */
+function pmStepButton(cls, icon, label) {
+    const node = el('span', cls);
+    node.appendChild(wbmIcon(icon));
+    node.title = label;
+    node.setAttribute('role', 'button');
+    node.setAttribute('aria-label', label);
+    return node;
+}
+
+/* 1.3.37：ensureStepButtons() 已删除——它从来没被调用过（装饰逻辑在 decoratePromptRows 里），
+   留两份「建 ↑↓」的实现只会让下次改动漏掉一处。 */
+/* 委托：点 ↑↓ 直接在数据里挪一格。整张列表只挂一个监听。 */
+function delegatePromptStep() {
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (!list || list.dataset.wbmStepDelegated) return;
+    list.dataset.wbmStepDelegated = '1';
+    list.addEventListener('click', (event) => {
+        /* 1.3.34：↑↓ 现在只存在于排序态（正常态是 Token 数字），所以判据反过来。 */
+        if (!pmSortOn) return;
+        const target = event.target;
+        if (!target || !target.closest) return;
+        const btn = target.closest('.wbm-pm-step-up, .wbm-pm-step-down');
+        if (!btn) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        const li = btn.closest('li[data-pm-identifier]');
+        if (!li) return;
+        const id = li.getAttribute('data-pm-identifier');
+        if (!id) return;
+        movePromptStep(id, btn.classList.contains('wbm-pm-step-up') ? -1 : 1);
+    }, true);
+}
+
+/* 1.3.46：排序态的点击都走这里——整张列表一份监听，行上不挂任何监听器。
+   原因：每行挂 4 个监听（⤓ 的 mousedown / pointerdown / click + 行点击）在 201 行时
+   是 800 多个闭包，进出排序态时随旧行滞留（实测 6 次 +7.9MB / +403 监听器）。 */
+function delegateSortRowEvents() {
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (!list || list.dataset.wbmRowDelegated) return;
+    list.dataset.wbmRowDelegated = '1';
+    /* 按下就截住：行尾这几枚键不该被宿主的 sortable 抓起来（拖拽已下线，抓起来只会乱跳） */
+    const swallow = (event) => {
+        const t = event.target;
+        if (!t || !t.closest) return;
+        if (!t.closest('.wbm-pm-insert, .wbm-pm-step, .wbm-pm-box')) return;
+        event.stopPropagation();
+    };
+    list.addEventListener('mousedown', swallow, true);
+    list.addEventListener('pointerdown', swallow, true);
+    list.addEventListener('touchstart', swallow, { capture: true, passive: true });
+    list.addEventListener('click', (event) => {
+        if (!pmSortOn) return;
+        const t = event.target;
+        if (!t || !t.closest) return;
+        const arrow = t.closest('.wbm-pm-insert');
+        if (arrow) {
+            event.preventDefault();
+            event.stopPropagation();
+            const target = arrow.closest('li[data-pm-identifier]');
+            if (target) moveSelectedBelow(target);
+            return;
+        }
+        if (t.closest('.prompt_manager_prompt_controls, .drag-handle, .wbm-pm-step, a')) return;
+        const li = t.closest('li[data-pm-identifier]');
+        if (!li) return;
+        const lid = li.getAttribute('data-pm-identifier');
+        if (!lid) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (pmSortSel.has(lid)) pmSortSel.delete(lid); else pmSortSel.add(lid);
+        syncSortSelection(li);
+    }, true);
+}
+
+/* 给列表每一行注入「↓」小键（列表每次重绘都要补）。
+   位置：行尾控件区的最前面（detach / edit / toggle 之前）——master 认可的上一版位置。 */
+/* ================= 排序状态（1.3.18，master 2026-10-22 定） =================
+   进入后：行尾的删除 / 启用 / 编辑三枚原生键全部隐藏，只留「序号 · ☰ · 名字 · 勾选框」，
+   勾选条目后点目标行的 ↓ 批量落位；☐ 仍可拖动微调。退出时三枚键原样回来，顺序存一次。 */
+let pmSortOn = false;
+const pmSortSel = new Set();
+
+/* ================= 1.3.40：查找已有条目（工具条上的查找框） =================
+   master 2026-10-22：参考 txt 编辑器的查找——搜已经添加好的那些条目，用上下切换跳转。
+   注意：**不筛选、不改变顺序**，只高亮命中行并滚过去；排序功能不能被查找框干扰。 */
+let pmFindQuery = '';
+let pmFindIdx = -1;
+
+function pmRowLabel(li) {
+    const nameEl = li && li.querySelector('.completion_prompt_manager_prompt_name, .prompt_manager_prompt_name');
+    const text = nameEl ? nameEl.textContent : (li ? li.textContent : '');
+    return String(text || '').trim();
+}
+
+function wbmFindNodes() {
+    const bar = document.querySelector('#completion_prompt_manager > .wbm-prompt-bar') || document.querySelector('.wbm-prompt-bar');
+    if (!bar) return null;
+    return {
+        bar,
+        input: bar.querySelector('.wbm-prompt-find'),
+        count: bar.querySelector('.wbm-find-count'),
+        prev: bar.querySelector('.wbm-find-prev'),
+        next: bar.querySelector('.wbm-find-next'),
+    };
+}
+
+function syncFindButtons(nodes, total) {
+    if (!nodes) return;
+    const text = pmFindQuery.trim() ? (total ? (pmFindIdx + 1) + '/' + total : '0/0') : '';
+    if (nodes.count && nodes.count.textContent !== text) nodes.count.textContent = text;
+    const off = !total;
+    if (nodes.prev && nodes.prev.disabled !== off) nodes.prev.disabled = off;
+    if (nodes.next && nodes.next.disabled !== off) nodes.next.disabled = off;
+}
+
+function markPromptFind(opts) {
+    const list = document.getElementById('completion_prompt_manager_list');
+    const nodes = wbmFindNodes();
+    const scroll = !(opts && opts.scroll === false);
+    const q = pmFindQuery.trim().toLowerCase();
+    if (list) list.querySelectorAll('.wbm-find-hit, .wbm-find-cur').forEach((n) => n.classList.remove('wbm-find-hit', 'wbm-find-cur'));
+    let hits = [];
+    if (list && q) {
+        for (const li of pmSortTargets()) {
+            if (pmRowLabel(li).toLowerCase().includes(q)) {
+                li.classList.add('wbm-find-hit');
+                hits.push(li);
+            }
+        }
+    }
+    if (!hits.length) pmFindIdx = -1;
+    else if (pmFindIdx < 0 || pmFindIdx >= hits.length) pmFindIdx = 0;
+    if (hits.length) {
+        const cur = hits[pmFindIdx];
+        cur.classList.add('wbm-find-cur');
+        if (scroll) wbmFlashFind(cur);
+        if (scroll) {
+            try { cur.scrollIntoView({ block: 'center' }); } catch (err) { cur.scrollIntoView(); }
+        }
+    }
+    syncFindButtons(nodes, hits.length);
+    if (nodes && nodes.input && nodes.input.value !== pmFindQuery) nodes.input.value = pmFindQuery;
+    return hits.length;
+}
+
+function wbmFlashFind(li) {
+    /* 只有一个命中时，上下键跳的永远是同一行——没有视觉反馈会让人以为「点了没反应」，
+       所以每次跳转都让当前行闪一下。 */
+    if (!li) return;
+    li.classList.remove('wbm-find-pulse');
+    void li.offsetWidth;
+    li.classList.add('wbm-find-pulse');
+    clearTimeout(wbmFlashFind.timer);
+    wbmFlashFind.timer = setTimeout(() => li.classList.remove('wbm-find-pulse'), 620);
+}
+
+function stepPromptFind(delta) {
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (!list || !pmFindQuery.trim()) return 0;
+    let hits = Array.from(list.querySelectorAll('li.wbm-find-hit'));
+    if (!hits.length) {
+        /* 宿主重绘后高亮类可能丢过一次：原地重算，别直接返回 0 */
+        if (!markPromptFind({ scroll: false })) return 0;
+        hits = Array.from(list.querySelectorAll('li.wbm-find-hit'));
+        if (!hits.length) return 0;
+    }
+    pmFindIdx = ((pmFindIdx < 0 ? 0 : pmFindIdx) + delta + hits.length) % hits.length;
+    hits.forEach((li) => li.classList.remove('wbm-find-cur'));
+    const cur = hits[pmFindIdx];
+    cur.classList.add('wbm-find-cur');
+    try { cur.scrollIntoView({ block: 'center' }); } catch (err) { /* 忽略 */ }
+    wbmFlashFind(cur);
+    syncFindButtons(wbmFindNodes(), hits.length);
+    return hits.length;
+}
+
+function clearPromptFind() {
+    pmFindQuery = '';
+    pmFindIdx = -1;
+    markPromptFind({ scroll: false });
+}
+
+function toggleFindTools(force) {
+    const nodes = wbmFindNodes();
+    if (!nodes || !nodes.bar) return false;
+    const open = (typeof force === 'boolean') ? force : !nodes.bar.classList.contains('wbm-find-open');
+    nodes.bar.classList.toggle('wbm-find-open', open);
+    if (open) {
+        if (nodes.input) {
+            nodes.input.value = pmFindQuery;
+            try { nodes.input.focus(); nodes.input.select(); } catch (err) { /* 忽略 */ }
+        }
+    } else {
+        if (nodes.input) nodes.input.value = '';
+        clearPromptFind();
+    }
+    return open;
+}
+
+function wbmBuildFindTools() {
+    const wrap = el('div', 'wbm-find-tools');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'text_pole wbm-prompt-find';
+    input.placeholder = '查找条目';
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('aria-label', '在当前提示词列表里查找');
+    input.addEventListener('mousedown', (event) => event.stopPropagation());
+    input.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
+    input.addEventListener('input', () => {
+        pmFindQuery = input.value;
+        pmFindIdx = -1;
+        markPromptFind();
+    });
+    /* 焦点不在输入框时（滚过列表后焦点常常丢了）也接受回车/上下键 */
+    document.addEventListener('keydown', (event) => {
+        const bar = document.querySelector('.wbm-prompt-bar');
+        if (!bar || !bar.classList.contains('wbm-find-open')) return;
+        if (!pmFindQuery.trim()) return;
+        if (event.target === input) return;
+        const tag = (event.target && event.target.tagName) || '';
+        if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+        if (event.key === 'Enter') { event.preventDefault(); stepPromptFind(event.shiftKey ? -1 : 1); return; }
+        if (event.key === 'ArrowDown' && !event.altKey) { event.preventDefault(); stepPromptFind(1); return; }
+        if (event.key === 'ArrowUp' && !event.altKey) { event.preventDefault(); stepPromptFind(-1); return; }
+    });
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            stepPromptFind(event.shiftKey ? -1 : 1);
+            return;
+        }
+        if (event.key === 'ArrowDown') { event.preventDefault(); stepPromptFind(1); return; }
+        if (event.key === 'ArrowUp') { event.preventDefault(); stepPromptFind(-1); return; }
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            input.value = '';
+            toggleFindTools(false);
+        }
+    });
+    const mkBtn = (cls, icon, label, delta) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = cls;
+        btn.appendChild(wbmIcon(icon));
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
+        btn.disabled = true;
+        btn.addEventListener('mousedown', (event) => event.stopPropagation());
+        btn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            stepPromptFind(delta);
+        });
+        return btn;
+    };
+    wrap.appendChild(input);
+    wrap.appendChild(mkBtn('wbm-find-prev', 'up', '上一个匹配', -1));
+    wrap.appendChild(mkBtn('wbm-find-next', 'down', '下一个匹配', 1));
+    wrap.appendChild(el('span', 'wbm-find-count', ''));
+    return wrap;
+}
+
+function pmSortTargets() {
+    return [...document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]')];
+}
+
+function applyPromptOrderFromIds(ids) {
+    const settings = oaiSettingsCache;
+    if (!settings) return false;
+    const list = orderListForDisplay(settings);
+    if (!list || !Array.isArray(list.order)) return false;
+    const byId = new Map();
+    for (const entry of list.order) if (entry && entry.identifier) byId.set(entry.identifier, entry);
+    const next = [];
+    for (const id of ids) {
+        if (!id) continue;
+        const hit = byId.get(id);
+        if (hit) { next.push(hit); byId.delete(id); }
+        else next.push({ identifier: id, enabled: true });
+    }
+    for (const rest of byId.values()) next.push(rest);
+    list.order = next;
+    try {
+        const ctx = SillyTavern.getContext();
+        if (ctx && typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+    } catch (err) { console.warn('[wbm] 保存排序失败', err); }
+    return true;
+}
+
+function refreshSortSeq() {
+    pmSortTargets().forEach((li, i) => {
+        const p = wbmRowParts(li);
+        const want = String(i + 1);
+        if (p.seq && p.seq.textContent !== want) p.seq.textContent = want;
+    });
+}
+/* 1.3.37 性能：把每行要用到的子元素挂在行元素上（li.__wbm）。
+   之后一次装饰 / 一次移动只做属性读写，不再「149 行 × 4~6 次 querySelector」。
+   宿主重绘会把整行换掉，所以先校验引用还在文档里，失效就重取。 */
+function wbmRowParts(li) {
+    let p = li.__wbm;
+    if (p && p.seq && p.seq.isConnected) return p;
+    p = li.__wbm = {
+        seq: li.querySelector('.wbm-pm-seq'),
+        box: li.querySelector('.wbm-pm-box'),
+        arrow: li.querySelector('.wbm-pm-insert'),
+        step: li.querySelector('.wbm-pm-step'),
+    };
+    p.up = p.step ? p.step.querySelector('.wbm-pm-step-up') : null;
+    p.down = p.step ? p.step.querySelector('.wbm-pm-step-down') : null;
+    return p;
+}
+
+/* 赋同值不写：149 行每次都赋同样值也会触发样式重算（1.3.31 的教训）。 */
+function wbmDim(node, on) {
+    if (!node) return;
+    const want = on ? '.22' : '';
+    if (node.style.opacity !== want) node.style.opacity = want;
+}
+
+/* 首行没有「上移」、末行没有「下移」。 */
+function setRowArrows(li, index, total) {
+    const p = wbmRowParts(li);
+    wbmDim(p.up, index === 0);
+    wbmDim(p.down, index === total - 1);
+}
+
+function updateSortBarCount() {
+    const count = document.querySelector('.wbm-prompt-bar .wbm-prompt-count');
+    if (!count) return;
+    const want = pmSortOn ? String(pmSortSel.size) : '';
+    if (count.textContent !== want) count.textContent = want;
+    const disp = pmSortOn ? '' : 'none';
+    if (count.style.display !== disp) count.style.display = disp;
+}
+
+/* onlyLi 只给一行时就用它（勾选一行不必再扫全表）。 */
+function syncSortSelection(onlyLi) {
+    const rows = onlyLi ? [onlyLi] : pmSortTargets();
+    const anyPicked = pmSortSel.size > 0;
+    for (const li of rows) {
+        const p = wbmRowParts(li);
+        const on = pmSortSel.has(li.getAttribute('data-pm-identifier'));
+        if (li.classList.contains('wbm-pm-picked') !== on) li.classList.toggle('wbm-pm-picked', on);
+        if (p.box) {
+            if (p.box.classList.contains('on') !== on) p.box.classList.toggle('on', on);
+            p.box.setAttribute('aria-checked', on ? 'true' : 'false');
+        }
+        if (p.arrow && p.arrow.classList.contains('wbm-pm-arrow-off') === anyPicked) {
+            p.arrow.classList.toggle('wbm-pm-arrow-off', !anyPicked);
+        }
+    }
+    /* 1.3.33：勾选变化要同步底栏计数（以前只在 syncPromptBar 里更新，永远显示 0）。 */
+    updateSortBarCount();
+}
+
+function moveSelectedBelow(targetLi) {
+    const targetId = targetLi ? targetLi.getAttribute('data-pm-identifier') : null;
+    const picked = [...pmSortSel];
+    if (!picked.length) { toast('warn', '先勾选要移动的条目，再点目标行的 ⤓'); return; }
+    const order = pmSortTargets().map((li) => li.getAttribute('data-pm-identifier'));
+    const movingSet = new Set(picked);
+    const moving = order.filter((id) => movingSet.has(id));
+    const rest = order.filter((id) => !movingSet.has(id));
+    let at = targetId ? rest.indexOf(targetId) : rest.length - 1;
+    if (at < 0) at = rest.length - 1;
+    const next = rest.slice(0, at + 1).concat(moving, rest.slice(at + 1));
+    if (next.join('|') === order.join('|')) { toast('info', '这些条目已经在那里了'); return; }
+    applyPromptOrderFromIds(next);
+    const map = new Map(pmSortTargets().map((li) => [li.getAttribute('data-pm-identifier'), li]));
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (list) for (const id of next) { const li = map.get(id); if (li) list.appendChild(li); }
+    refreshSortSeq();
+    pmSortSel.clear();
+    syncSortSelection();
+    toast('ok', '已把 ' + moving.length + ' 条移到目标位置');
+}
+
+/* ================= ④ 跨预设复制条目（1.3.38） =================
+   master 2026-10-22：「现在只需要做快速复制到另一个预设的功能就好了」——
+   勾选的条目整条（名字/正文/角色/注入位置一并）复制到另一个预设的最顶部。
+   只做复制不做移动；目标预设单选；复制完不自动切过去（三条都是 master 定的）。 */
+
+function wbmNewPromptId() {
+    try {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    } catch (err) { /* ignore */ }
+    return 'wbm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+/* 内置条目不能复制：它们的 identifier 是写死的（main / worldInfoBefore / charDescription …），
+   复制到别的预设会与目标里同 identifier 的那条撞车（宿主按 identifier 匹配，两边互相顶）。
+   判据用宿主自己的标记位：PromptManager.addPrompt 给用户新建条目写的是
+   system_prompt:false / marker:false，内置的必是两者之一 —— 比硬编码名单可靠。 */
+function isWbmUserPrompt(p) {
+    return !!p && !p.system_prompt && !p.marker;
+}
+
+function orderEntryEnabled(list, id) {
+    if (!list || !Array.isArray(list.order)) return true;
+    const hit = list.order.find((e) => e && e.identifier === id);
+    return hit ? hit.enabled !== false : true;
+}
+
+async function copyPromptsToPreset(targetName, ids) {
+    const settings = await getOaiSettings();
+    if (!settings) return { ok: false, why: '拿不到当前预设' };
+    const ctx = window.SillyTavern && typeof window.SillyTavern.getContext === 'function'
+        ? window.SillyTavern.getContext() : null;
+    const pm = ctx && typeof ctx.getPresetManager === 'function' ? ctx.getPresetManager('openai') : null;
+    if (!pm || typeof pm.getPresetList !== 'function' || typeof pm.savePreset !== 'function') {
+        return { ok: false, why: '这个酒馆版本没有预设管理接口' };
+    }
+    const list = pm.getPresetList('openai');
+    const names = (list && list.preset_names) || {};
+    const idx = names[targetName];
+    if (idx === undefined || !list.presets || !list.presets[idx]) {
+        return { ok: false, why: '找不到预设「' + targetName + '」' };
+    }
+    /* 先克隆再改：写盘失败时内存里那份不能被改脏 */
+    const target = structuredClone(list.presets[idx]);
+    const srcOrder = orderListForDisplay(settings);
+    const prompts = Array.isArray(settings.prompts) ? settings.prompts : [];
+    const made = [];
+    for (const id of ids) {
+        const src = prompts.find((p) => p && p.identifier === id);
+        if (!src || !isWbmUserPrompt(src)) continue;
+        const copy = structuredClone(src);
+        copy.identifier = wbmNewPromptId();
+        /* 启用状态以源条目在当前这份顺序里的为准（enabled 存在 prompt_order 的条目上，
+           不在 prompts 的条目上） */
+        made.push({ prompt: copy, enabled: orderEntryEnabled(srcOrder, id) });
+    }
+    if (!made.length) return { ok: false, why: '没有可复制的条目' };
+
+    target.prompts = Array.isArray(target.prompts) ? target.prompts : [];
+    for (const m of made) target.prompts.push(m.prompt);
+
+    /* 落到目标预设最顶部。prompt_order 是按角色分组的数组，每份都要有这一条，
+       否则切到别的角色就看不见它。 */
+    if (!Array.isArray(target.prompt_order)) target.prompt_order = [];
+    if (target.prompt_order.length) {
+        for (const l of target.prompt_order) {
+            if (!l || !Array.isArray(l.order)) continue;
+            const mine = made
+                .filter((m) => !l.order.some((e) => e && e.identifier === m.prompt.identifier))
+                .map((m) => ({ identifier: m.prompt.identifier, enabled: m.enabled }));
+            if (mine.length) l.order.unshift(...mine);
+        }
+    } else {
+        /* 目标预设没有顺序表（极少见）：拿当前这份顺序当底，把新条目插到最前面 */
+        const base = srcOrder ? structuredClone(srcOrder) : { character_id: 100001, order: [] };
+        const rest = Array.isArray(base.order) ? base.order.filter((e) => e && e.identifier) : [];
+        base.order = made.map((m) => ({ identifier: m.prompt.identifier, enabled: m.enabled })).concat(rest);
+        target.prompt_order = [base];
+    }
+
+    await pm.savePreset(targetName, target, { skipUpdate: true });
+    /* 内存里那份预设副本也要带上新条目：宿主切预设时读的是 openai_settings（= list.presets），
+       不更新的话切过去看不到，得重启酒馆。 */
+    list.presets[idx] = target;
+    /* 启用状态是照源预设搬过来的：源里是关的，搬过去也是关的。
+       报给界面用，免得读者看到「复制成功」却在目标里找不到生效的条目。 */
+    const off = made.filter((m) => m.enabled === false).length;
+    return { ok: true, count: made.length, off };
+}
+
+async function openCopyToPresetPicker() {
+    try {
+        if (!pmSortOn) {
+            toast('warn', '先点右侧「调整排序」，勾选条目后再点左边这个键');
+            return;
+        }
+        const picked = [...pmSortSel];
+        if (!picked.length) { toast('warn', '先勾选要复制的条目，再点这个键'); return; }
+        /* 1.3.38b：这里以前只读 oaiSettingsCache，而缓存是 getOaiSettings() 异步填的，
+           冷启动后第一次点会空 → 误报「还没读完」。改走宿主暴露的 chatCompletionSettings，
+           再兜底异步取一次。 */
+        const hostCtx = window.SillyTavern && typeof window.SillyTavern.getContext === 'function'
+            ? window.SillyTavern.getContext() : null;
+        const settings = (hostCtx && hostCtx.chatCompletionSettings)
+            || oaiSettingsCache || await getOaiSettings();
+        if (!settings) { toast('warn', '拿不到当前预设，稍等一下再点'); return; }
+        const prompts = Array.isArray(settings.prompts) ? settings.prompts : [];
+        const copyable = [];
+        let skipped = 0;
+        for (const id of picked) {
+            const p = prompts.find((x) => x && x.identifier === id);
+            if (!p) continue;
+            if (!isWbmUserPrompt(p)) { skipped += 1; continue; }
+            copyable.push(id);
+        }
+        if (!copyable.length) {
+            toast('warn', '勾选的 ' + skipped + ' 条都是内置条目，内置条目不能跨预设复制');
+            return;
+        }
+        const pm = hostCtx && typeof hostCtx.getPresetManager === 'function' ? hostCtx.getPresetManager('openai') : null;
+        const list = pm && typeof pm.getPresetList === 'function' ? pm.getPresetList('openai') : null;
+        const all = Object.keys((list && list.preset_names) || {});
+        const current = (settings.preset_settings_openai || '');
+        const others = all.filter((n) => n !== current);
+        if (!others.length) { toast('warn', '没有其它预设可以复制'); return; }
+
+        /* 1.3.39：目标预设按「分组」排（master 2026-10-22：「应该借用我们自己添加的预设管理分组
+           形成联动。也就是按分组展示」）。分组数据就是对话补全预设那一套 store.talkPresetGroups，
+           键是预设名、值是组名；没分组的一律落到最后的「未分组」。 */
+        const groups = (store.talkPresetGroups && typeof store.talkPresetGroups === 'object') ? store.talkPresetGroups : {};
+        const groupOf = (name) => String(groups[name] || '').trim();
+        const sorted = others.slice().sort((a, b) => {
+            const ga = groupOf(a) || '\uffff未分组';
+            const gb = groupOf(b) || '\uffff未分组';
+            return ga === gb ? String(a).localeCompare(String(b), 'zh-Hans-CN') : String(ga).localeCompare(String(gb), 'zh-Hans-CN');
+        });
+
+        closeEditorPicker(true);
+        const { mask, sheet } = makePickerShell();
+        const { head, input } = buildPickerHead('搜索预设');
+        const hint = el('div', 'wbm-copy-hint');
+        hint.textContent = '把勾选的 ' + copyable.length + ' 条复制到目标预设的最顶部'
+            + (skipped ? '（已跳过 ' + skipped + ' 条内置条目）' : '')
+            + '；点下面的预设选中，再确认才会复制';
+        const listEl = el('div', 'wbm-picker-list');
+
+        /* 底部确认条：先在列表里选一个预设，这里写明「会保存一次」，按确认才写盘。
+           不做二级弹窗（master 明确否过两级弹窗）。 */
+        const confirmBar = el('div', 'wbm-copy-confirm');
+        confirmBar.hidden = true;
+        const confirmText = el('div', 'wbm-copy-confirm-text', '');
+        const confirmRow = el('div', 'wbm-copy-confirm-actions');
+        const cancelBtn = el('button', 'wbm-picker-action', '取消');
+        const okBtn = el('button', 'wbm-picker-action primary', '确认复制');
+        cancelBtn.type = 'button';
+        okBtn.type = 'button';
+        confirmRow.appendChild(cancelBtn);
+        confirmRow.appendChild(okBtn);
+        confirmBar.appendChild(confirmText);
+        confirmBar.appendChild(confirmRow);
+
+        let pending = '';
+        const setPending = (name) => {
+            pending = name || '';
+            for (const row of listEl.querySelectorAll('[data-role="copy-preset"]')) {
+                row.classList.toggle('active', !!pending && row.dataset.name === pending);
+            }
+            if (!pending) { confirmBar.hidden = true; return; }
+            confirmText.textContent = '复制到「' + pending + '」会立刻保存该预设一次（写入磁盘文件）';
+            okBtn.textContent = '复制到「' + pending + '」';
+            confirmBar.hidden = false;
+        };
+
+        const fill = (query) => {
+            listEl.textContent = '';
+            const kw = String(query || '').trim().toLowerCase();
+            let shown = 0;
+            let lastGroup = null;
+            for (const name of sorted) {
+                const group = groupOf(name);
+                if (kw && !name.toLowerCase().includes(kw) && !group.toLowerCase().includes(kw)) continue;
+                if (group !== lastGroup) {
+                    lastGroup = group;
+                    listEl.appendChild(el('div', 'wbm-picker-group-label', group || '未分组'));
+                }
+                const row = el('div', 'wbm-picker-row wbm-copy-preset-row' + (name === pending ? ' active' : ''));
+                row.dataset.role = 'copy-preset';
+                row.dataset.name = name;
+                row.appendChild(el('span', 'wbm-copy-row-name', name));
+                listEl.appendChild(row);
+                shown += 1;
+            }
+            if (!shown) listEl.appendChild(el('div', 'wbm-picker-empty', kw ? '没有匹配的预设' : '没有其它预设'));
+        };
+        fill('');
+        sheet.appendChild(el('div', 'wbm-picker-grip'));
+        sheet.appendChild(head);
+        sheet.appendChild(hint);
+        sheet.appendChild(listEl);
+        sheet.appendChild(confirmBar);
+
+        cancelBtn.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); setPending(''); });
+        okBtn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (mask.dataset.busy === '1') return;
+            const name = pending;
+            if (!name) return;
+            mask.dataset.busy = '1';
+            okBtn.textContent = '复制中…';
+            const res = await copyPromptsToPreset(name, copyable);
+            if (res && res.ok) {
+                toast('ok', '已把 ' + res.count + ' 条复制到「' + name + '」的最顶部，并保存了该预设'
+                    + (skipped ? '，跳过 ' + skipped + ' 条内置条目' : '')
+                    + (res.off ? '，其中 ' + res.off + ' 条保持关闭状态' : ''));
+                closeEditorPicker();
+                return;
+            }
+            mask.dataset.busy = '';
+            okBtn.textContent = '复制到「' + name + '」';
+            toast('err', '复制失败：' + ((res && res.why) || '未知原因'));
+        });
+
+        mask.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (mask.dataset.closing === '1') return;
+            const hit = event.target instanceof Element ? event.target : null;
+            if (!hit) return;
+            if (hit === mask) { closeEditorPicker(); return; }
+            if (hit.closest('[data-role="picker-close"]')) { closeEditorPicker(); return; }
+            if (hit.closest('.wbm-copy-confirm')) return;
+            const row = hit.closest('[data-role="copy-preset"]');
+            if (!row) return;
+            if (mask.dataset.busy === '1') return;
+            setPending(row.dataset.name || '');
+        });
+        mask.addEventListener('input', (event) => {
+            const t = event.target;
+            if (t instanceof HTMLInputElement && t.dataset.role === 'picker-search') fill(t.value);
+        });
+        /* 挂到 html 而不是 body：body 上有 transform（UI 缩放）时 fixed 会相对它定位 */
+        document.documentElement.appendChild(mask);
+        if (input) input.focus();
+    } catch (err) {
+        console.error('[wbm] openCopyToPresetPicker failed', err);
+        toast('err', '打开复制窗口失败');
+    }
+}
+
+/* ================= 1.3.39：插入提示词的搜索 / 触屏浮窗 =================
+   master 2026-10-22：「因为添加提示词还需要从提示词库中选出来然后添加，因此需要制作搜索功能，
+   而且手机端还是一贯地需要把下拉栏改成我们自己的浮窗。」
+   原版那条路是「底部一个 68 项的 select + 一个链条键（Insert prompt）」：
+   电脑端保留原版下拉，在它上面加一条实时搜索（照样过滤原生 option，不替换）；
+   触屏端把下拉收起来，改用我们自己的浮窗（原生 select 手机上太难用）。 */
+const WBM_APPEND_SEL_ID = 'completion_prompt_manager_footer_append_prompt';
+
+function wbmAppendSelect() {
+    const sel = document.getElementById(WBM_APPEND_SEL_ID);
+    return sel instanceof HTMLSelectElement ? sel : null;
+}
+
+/* 插入走酒馆自己的那条路：先把 select 的 value 指到目标条目，再点它的链条键
+   （handleAppendPrompt → appendPrompt + render + save）。不自己写 settings。 */
+function appendPromptById(id) {
+    const sel = wbmAppendSelect();
+    if (!sel || !id) return false;
+    if (!Array.from(sel.options).some((o) => o.value === id)) return false;
+    const footer = sel.closest('.completion_prompt_manager_footer');
+    const chain = footer ? footer.querySelector('.fa-chain') : null;
+    if (!chain) return false;
+    sel.value = id;
+    chain.click();
+    return true;
+}
+
+function openAppendPromptPicker() {
+    const sel = wbmAppendSelect();
+    if (!sel) return;
+    /* 下拉里列的是「这个预设所有非内置提示词」，其中一部分已经在列表里了。
+       宿主 appendPrompt 对已在列表里的条目是空操作（-1 === index 才 unshift），
+       所以这些行要标出来，别让 master 点了以为坏了。 */
+    const inList = new Set(Array.from(document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]'))
+        .map((li) => li.getAttribute('data-pm-identifier')));
+    const items = Array.from(sel.options)
+        .map((o) => ({ id: o.value, name: String(o.textContent || '').trim(), inList: inList.has(o.value) }))
+        .filter((x) => !!x.id && !!x.name);
+    if (!items.length) { toast('warn', '这个预设里还没有可插入的提示词'); return; }
+    closeEditorPicker(true);
+    const { mask, sheet } = makePickerShell();
+    const { head, input } = buildPickerHead('搜索提示词');
+    const hint = el('div', 'wbm-copy-hint', '点一条就插到列表最下面（和原版链条键同一个动作）');
+    const listEl = el('div', 'wbm-picker-list');
+    const fill = (query) => {
+        listEl.textContent = '';
+        const kw = String(query || '').trim().toLowerCase();
+        let shown = 0;
+        for (const item of items) {
+            if (kw && !item.name.toLowerCase().includes(kw)) continue;
+            const row = el('div', 'wbm-picker-row' + (item.inList ? ' wbm-append-inlist' : ''));
+            row.dataset.role = 'append-prompt';
+            row.dataset.id = item.id;
+            row.dataset.inlist = item.inList ? '1' : '';
+            row.appendChild(el('span', 'wbm-copy-row-name', item.name));
+            if (item.inList) row.appendChild(el('span', 'wbm-append-tag', '已在列表'));
+            listEl.appendChild(row);
+            shown += 1;
+        }
+        if (!shown) listEl.appendChild(el('div', 'wbm-picker-empty', '没有匹配的提示词'));
+    };
+    fill('');
+    sheet.appendChild(el('div', 'wbm-picker-grip'));
+    sheet.appendChild(head);
+    sheet.appendChild(hint);
+    sheet.appendChild(listEl);
+    mask.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (mask.dataset.closing === '1') return;
+        const hit = event.target instanceof Element ? event.target : null;
+        if (!hit) return;
+        if (hit === mask) { closeEditorPicker(); return; }
+        if (hit.closest('[data-role="picker-close"]')) { closeEditorPicker(); return; }
+        const row = hit.closest('[data-role="append-prompt"]');
+        if (!row) return;
+        const id = row.dataset.id || '';
+        if (!id) return;
+        if (row.dataset.inlist === '1') {
+            const nm = (row.querySelector('.wbm-copy-row-name') || {}).textContent || '这一条';
+            toast('info', '「' + nm + '」已经在列表里，不用再加一次');
+            return;
+        }
+        closeEditorPicker();
+        if (!appendPromptById(id)) toast('err', '插入失败：这一条已经不在下拉里了');
+    });
+    mask.addEventListener('input', (event) => {
+        const t = event.target;
+        if (t instanceof HTMLInputElement && t.dataset.role === 'picker-search') fill(t.value);
+    });
+    document.documentElement.appendChild(mask);
+    if (input) input.focus();
+}
+
+/* 底部那排：电脑端＝搜索框（过滤原生下拉的 option），触屏端＝「选提示词」按钮（开浮窗）。
+   宿主每次重绘列表都会重造 footer，所以这里做幂等：已经有了就只更新 coarse 标记。 */
+function ensurePromptAppendTools() {
+    if (!featureOn('promptMgr')) return;
+    const sel = wbmAppendSelect();
+    if (!sel) return;
+    const footer = sel.closest('.completion_prompt_manager_footer');
+    const host = footer ? footer.parentElement : null;
+    if (!host) return;
+    let bar = host.querySelector('.wbm-append-bar');
+    if (!bar && wbmAppendBarNode) {
+        /* 1.3.49：宿主重绘把 footer 整块换掉时，把缓存的那一条插回去，别重建（重建会闪一下）。 */
+        host.insertBefore(wbmAppendBarNode, footer);
+        bar = wbmAppendBarNode;
+    }
+    if (!bar) {
+        bar = el('div', 'wbm-append-bar');
+        wbmAppendBarNode = bar;
+        const search = el('input', 'text_pole wbm-append-search');
+        search.type = 'text';
+        search.placeholder = '筛选下面的下拉框';
+        search.dataset.role = 'append-search';
+        search.setAttribute('autocomplete', 'off');
+        const btn = el('button', 'menu_button wbm-append-btn');
+        btn.type = 'button';
+        btn.title = '搜索并选择要插入的提示词';
+        btn.appendChild(wbmIcon('search'));
+        btn.appendChild(el('span', 'wbm-append-btn-text', '选提示词'));
+        const count = el('span', 'wbm-append-count', '');
+        bar.appendChild(search);
+        bar.appendChild(btn);
+        bar.appendChild(count);
+        host.insertBefore(bar, footer);
+        const apply = () => {
+            /* 1.3.49：select 由宿主重绘时会被换掉，所以每次现取，不能闭包旧节点。 */
+            const cur = wbmAppendSelect();
+            if (!cur) return;
+            const kw = String(search.value || '').trim().toLowerCase();
+            let shown = 0;
+            for (const opt of Array.from(cur.options)) {
+                const name = String(opt.textContent || '').toLowerCase();
+                const hide = !!kw && !name.includes(kw);
+                if (opt.hidden !== hide) opt.hidden = hide;
+                if (!hide) shown += 1;
+            }
+            count.textContent = kw ? ('匹配 ' + shown + ' / ' + cur.options.length) : '';
+        };
+        search.addEventListener('input', apply);
+        search.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            const cur = wbmAppendSelect();
+            const first = cur ? Array.from(cur.options).find((o) => !o.hidden) : null;
+            if (first) appendPromptById(first.value);
+        });
+        btn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openAppendPromptPicker();
+        });
+    }
+    const coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    const want = coarse ? '1' : '';
+    if (bar.dataset.coarse !== want) bar.dataset.coarse = want;
+}
+
+function exitPmSort(opts) {
+    /* 1.3.39：换预设时也要退出排序模式。那种时刻 DOM 正被宿主重绘，
+       不能再按 DOM 去反推 prompt_order（会把旧顺序写进新预设），所以给个跳过修复的口子。 */
+    const skipRepair = !!(opts && opts.skipRepair);
+    pmSortOn = false;
+    pmSortSel.clear();
+    /* 1.3.47：这里不再去改 sortable 的选项。
+       以前这里把 handle 设成 false，下一轮 pinPromptDragHandle 又设回 '.wbm-never-drag'，
+       两边来回改就是 setOption 风暴的来源（每次都会重建内部 items）。 */
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (list) list.classList.remove('wbm-sorting');
+    document.querySelectorAll('#completion_prompt_manager_list .wbm-pm-seq, #completion_prompt_manager_list .wbm-pm-box, #completion_prompt_manager_list .wbm-pm-insert').forEach((n) => n.remove());
+    pmSortTargets().forEach((li) => li.classList.remove('wbm-pm-picked'));
+    if (!skipRepair) {
+        try { repairPromptOrderFromDom(); } catch (err) { console.warn('[wbm] 退出排序后修复失败', err); }
+    }
+    /* 别往按钮里写中文：它的内容是 SVG，写 textContent 会把图标冲掉（1.3.35 的 bb）。
+       统一交给 syncPromptBar 换回 ↑↓ 图标。 */
+    syncPromptBar();
+}
+
+function enterPmSort() {
+    pmSortOn = true;
+    pmSortSel.clear();
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (list) list.classList.add('wbm-sorting');
+    /* 同上：按钮内容是 SVG，不能写 textContent；syncPromptBar 负责把图标换成 ✕。 */
+    syncPromptBar();
+    decoratePromptRows();
+    syncSortSelection();
+}
+
+function togglePmSort() {
+    /* 宿主在列表重绘时会重新 sortable()，disabled 会被复位；这里排几次重关。 */
+    [0, 120, 400, 900].forEach((ms) => setTimeout(pinPromptDragHandle, ms));
+    if (pmSortOn) exitPmSort(); else enterPmSort();
+}
+
+/* 1.3.37：装饰（序号 / 勾选框 / ⤓ / ↑↓）的增删集中在这里。
+   性能要点：①签名早退（修掉正常态永远不相等的老 bug）；②逐行元素引用缓存；
+   ③换位走 movePromptStep 的增量路径，不回到这里全量重扫。 */
+const WBM_SORT_PARTS = '.wbm-pm-seq, .wbm-pm-box, .wbm-pm-insert, .wbm-pm-step';
+
+/* 宿主重绘会重建 sortable（拖拽又被打开），所以要补一次；只留一个重试定时器。 */
+function pinPromptDragHandleSoon() {
+    if (pinPromptDragHandle()) { decoratePromptRows.pinRetry = 0; return; }
+    if (decoratePromptRows.pinRetry) return;
+    decoratePromptRows.pinRetry = setTimeout(() => { decoratePromptRows.pinRetry = 0; pinPromptDragHandle(); }, 400);
+}
+
+function decorateSortRows(list, rows) {
+    list.classList.add('wbm-sorting');
+    rows.forEach((li, i) => {
+        const p = wbmRowParts(li);
+        const want = String(i + 1);
+        if (!p.seq) {
+            p.seq = el('span', 'wbm-pm-seq', want);
+            li.insertBefore(p.seq, li.firstChild);
+        } else if (p.seq.textContent !== want) {
+            p.seq.textContent = want;
+        }
+        if (!p.box) {
+            p.box = el('span', 'wbm-pm-box');
+            p.box.setAttribute('role', 'checkbox');
+            p.seq.insertAdjacentElement('afterend', p.box);
+        }
+        if (!p.arrow) {
+            p.arrow = el('span', 'wbm-pm-insert');
+            p.arrow.appendChild(wbmIcon('insert'));
+            p.arrow.title = '把勾选的条目插到这一行下面';
+            p.arrow.setAttribute('role', 'button');
+            /* 1.3.37：⤓ 从「勾选框右边」挪到行尾（↑↓ 左边）。它原来紧贴勾选框，
+               手机上勾选时经常点到它、把条目搬到错误位置（master 报的误触）。 */
+            const stepNode = li.querySelector('.wbm-pm-step');
+            if (stepNode) li.insertBefore(p.arrow, stepNode);
+            else li.appendChild(p.arrow);
+        }
+        if (!p.step) {
+            p.step = el('span', 'wbm-pm-step');
+            p.step.appendChild(pmStepButton('wbm-pm-step-up', 'up', '上移一格'));
+            p.step.appendChild(pmStepButton('wbm-pm-step-down', 'down', '下移一格'));
+            p.up = p.step.querySelector('.wbm-pm-step-up');
+            p.down = p.step.querySelector('.wbm-pm-step-down');
+            li.appendChild(p.step);
+        }
+        setRowArrows(li, i, rows.length);
+    });
+    syncSortSelection();
+    delegatePromptStep();
+    delegateSortRowEvents();
+}
+
+function stripSortRows(list, rows) {
+    /* 一次查全表再摘，比每行各查一次快（1.3.31 的经验）。 */
+    const junk = list.querySelectorAll(WBM_SORT_PARTS);
+    if (junk.length) junk.forEach((n) => n.remove());
+    for (const li of rows) {
+        if (li.__wbm) li.__wbm = null;
+        if (li.classList.contains('wbm-pm-picked') || li.classList.contains('wbm-pm-moving') || li.classList.contains('wbm-pm-hover')) {
+            li.classList.remove('wbm-pm-picked', 'wbm-pm-moving', 'wbm-pm-hover');
+        }
+    }
+    list.classList.remove('wbm-sorting');
+}
+
+/* 自愈：DOM 行数比数据少 → 宿主把某一行「吞」了（prompt_order 里出现空项）。
+   1.3.37：改成 Set 查表（原来是每份 order × 每行 ids.includes，O(n²)），并 3 秒最多查一次。 */
+function healPromptRows(rows) {
+    try {
+        const now = Date.now();
+        if (decoratePromptRows.healing) return;
+        if (now - (decoratePromptRows.checkedAt || 0) < 3000) return;
+        decoratePromptRows.checkedAt = now;
+        const ctx = SillyTavern.getContext();
+        const lists = ctx.chatCompletionSettings && ctx.chatCompletionSettings.prompt_order;
+        if (!Array.isArray(lists) || !rows.length) return;
+        const ids = new Set(rows.map((li) => li.getAttribute('data-pm-identifier')));
+        let bestMatched = 0;
+        let bestFilled = 0;
+        for (const l of lists) {
+            if (!Array.isArray(l.order) || !l.order.length) continue;
+            let filled = 0;
+            let matched = 0;
+            for (const e of l.order) {
+                if (!e || !e.identifier) continue;
+                filled++;
+                if (ids.has(e.identifier)) matched++;
+            }
+            if (matched > bestMatched) { bestMatched = matched; bestFilled = filled; }
+        }
+        if (!bestFilled || rows.length >= bestFilled) return;
+        /* 绝不能拿 DOM 反写数据：DOM 少一行时反写等于把那条删掉。只能请宿主重绘。 */
+        const pm = ctx.PromptManager;
+        if (pm && typeof pm.render === 'function') {
+            decoratePromptRows.healing = true;
+            pm.render();
+            console.warn('[wbm] 行数不一致（DOM ' + rows.length + ' / 数据 ' + bestFilled + '），已尝试重绘');
+            window.setTimeout(() => { decoratePromptRows.healing = false; }, 800);
+        }
+    } catch (err) { /* 自愈失败不影响正常使用 */ }
+}
+
+function decoratePromptRows() {
+    if (!featureOn('promptMgr')) return;
+    const list = document.getElementById('completion_prompt_manager_list');
+    if (!list) return;
+    const rows = pmSortTargets();
+    /* 签名 = 行 id 顺序 + 模式。1.3.37 修掉一只让早退永不生效的 bug：
+       以前比较用 '#N'、写入用 ''，正常态永远不相等，于是每次调用都白扫 149 行。 */
+    const sig = rows.map((li) => li.getAttribute('data-pm-identifier')).join('|') + (pmSortOn ? '#S' : '#N');
+    const intact = !rows.length || (pmSortOn
+        ? !!(rows[0].__wbm && rows[0].__wbm.seq && rows[0].__wbm.seq.isConnected)
+        : !list.querySelector(WBM_SORT_PARTS));
+    if (sig === decoratePromptRows.lastSignature && decoratePromptRows.mode === pmSortOn && intact) {
+        pinPromptDragHandleSoon();
+        return;
+    }
+    ensurePromptHooks();
+    if (pmSortOn) decorateSortRows(list, rows);
+    else stripSortRows(list, rows);
+    pinPromptDragHandleSoon();
+    decoratePromptRows.lastSignature = sig;
+    decoratePromptRows.mode = pmSortOn;
+    healPromptRows(rows);
+    /* 宿主重绘会把 li 换掉，查找高亮跟着丢；这里补回来（不滚屏）。 */
+    if (pmFindQuery) markPromptFind({ scroll: false });
+}
+/* ================= ④ 提示词编辑弹窗：保存键常驻 =================
+   原文的保存/重置/关闭在长表单最底部，提示词一长就得先滚到底。给那一行贴住底部。 */
+
+/* 三个钩子幂等，列表每次重绘都调一遍（1.3.15）。
+   之前它们被写在 decoratePromptRows 的 return 之后，等于从没执行过 —— 这就是
+   「distance 仍是 1、点星号还是被当成拖拽」的真正原因。 */
+function ensurePromptHooks() {
+    try { hardenPromptSortable(); } catch (err) { console.warn('[wbm] sortable 加固失败', err); }
+    try { ensurePromptOrderComplete(); } catch (err) { console.warn('[wbm] prompt_order 补全失败', err); }
+    try { hookPromptSortableCapture(); } catch (err) { console.warn('[wbm] sortable 捕获挂钩失败', err); }
+}
+
+function ensureStickySave() {
+    const btn = document.getElementById('completion_prompt_manager_popup_entry_form_save');
+    if (!btn) return;
+    const row = btn.closest('.completion_prompt_manager_popup_entry_form_control') || btn.parentElement;
+    if (!row || row.classList.contains('wbm-pm-sticky')) return;
+    row.classList.add('wbm-pm-sticky');
+}
+
+let pmExtrasObserver = null;
+let pmExtrasObserverTarget = null;
+
+function hookPromptManagerExtras() {
+    if (!featureOn('promptMgr')) { teardownPromptMgrDom(); return; }
+    /* 1.3.44 性能：每 5 秒的看门狗都会调这里，而下面 6 个函数里有两个要扫 200+ 行 DOM。
+       观察者还挂在活着的节点上、工具条也还在，就说明什么都没丢，直接返回。 */
+    if (pmExtrasObserver && pmExtrasObserverTarget && pmExtrasObserverTarget.isConnected
+        && document.querySelector('#completion_prompt_manager > .wbm-prompt-bar')) return;
+    ensurePromptHooks();
+    ensurePromptInsertButton();
+    syncPromptBar();
+    ensureStickySave();
+    hardenPromptSortable();
+    ensurePromptOrderComplete();
+    hookPromptSortableCapture();
+    if (pmExtrasObserver) {
+        /* 宿主重绘会把管理器整块换掉，旧 observer 就失效了；发现脱挂就重建。 */
+        if (pmExtrasObserverTarget && pmExtrasObserverTarget.isConnected) return;
+        try { pmExtrasObserver.disconnect(); } catch (err) { /* 忽略 */ }
+        pmExtrasObserver = null;
+    }
+    /* 1.3.26 性能：只盯提示词管理器本身。以前盯 document.body + subtree，
+       150 行的重绘会把全页变动都喂进来（master 报明显卡顿）。 */
+    const target = document.getElementById('completion_prompt_manager') || document.body;
+    pmExtrasObserverTarget = target;
+    if (!target) return;
+
+    let slowPending = 0;
+    let fastPending = 0;
+    let lastSlow = 0;
+    let lastRowCount = -1;
+
+    const slowWork = () => {
+        slowPending = 0;
+        lastSlow = Date.now();
+        ensurePromptInsertButton();
+        ensurePromptAppendTools();
+        ensureStickySave();
+        hardenPromptSortable();
+        /* 1.3.31：ensurePromptOrderComplete 会遍历整份 prompt_order（150+ 条），
+           以前每次结构变化都跑一遍。改成只在「行数变了」时才跑——点开关只是重绘，行数不变。 */
+        const count = document.querySelectorAll('#completion_prompt_manager_list li[data-pm-identifier]').length;
+        if (count !== lastRowCount) {
+            lastRowCount = count;
+            ensurePromptOrderComplete();
+        }
+    };
+
+    /* 宿主每次重绘提示词列表都会把我们的 ↓ 一起清掉（1.3.10 之前要等 300ms 才补，
+       于是点开关时箭头会「闪一下不见」——master 2026-10-22 报的闪烁就是这么来的）。
+       列表内的变动走 rAF 立刻补，只有底部/弹窗这类慢活才用节流。 */
+    const fastWork = () => {
+        fastPending = 0;
+        decoratePromptRows();
+        /* 宿主重绘会重造 footer，搜索行要立刻补回来（否则会闪一下不见）。 */
+        ensurePromptAppendTools();
+    };
+
+    pmExtrasObserver = new MutationObserver((records) => {
+        /* 1.3.49：被清掉的工具条在这里当场插回去（微任务阶段，赶在同一帧绘制前）。 */
+        ensureDockMounted();
+        /* 1.3.29 性能：只认「元素节点进出」。宿主会时不时改 Token 计数这类纯文本，
+           原来把它也当结构变化 → 每 300ms 重扫 150 行（实测 idle 3 秒 9 次、每次 11ms 白烧）。 */
+        let structural = false;
+        for (const rec of records) {
+            if (rec.type !== 'childList') continue;
+            for (const n of rec.addedNodes) { if (n.nodeType === 1) { structural = true; break; } }
+            if (!structural) for (const n of rec.removedNodes) { if (n.nodeType === 1) { structural = true; break; } }
+            if (structural) break;
+        }
+        if (!structural) return;
+        const list = document.getElementById('completion_prompt_manager_list');
+        let touchedList = false;
+        if (list) {
+            for (const rec of records) {
+                if (rec.target === list || (rec.target.nodeType === 1 && list.contains(rec.target))) {
+                    touchedList = true;
+                    break;
+                }
+            }
+        }
+        if (touchedList && !fastPending) fastPending = requestAnimationFrame(fastWork);
+
+        const gap = Date.now() - lastSlow;
+        if (gap >= 600) {
+            slowWork();
+            return;
+        }
+        if (slowPending) return;
+        slowPending = setTimeout(slowWork, 620 - gap);
+    });
+    pmExtrasObserver.observe(target, { childList: true, subtree: true });
+}
+
+function bindMessageDblClick() {
         /* 只挂一次：boot 失败重试、看门狗补挂都会再进来，
             重复绑定会让「一次轻触」被自己的两个处理器配成一对，等于单击就进编辑
             （2026-10-20 实测：一次点击产生两条 touchend 记录，hits 立刻 +1）。 */
@@ -7782,12 +10290,25 @@ function updateEditorButton() {
         /* 自绘列表的根节点没有 class（只有 id），按前缀那批收不走，单独收一次 */
         const listRoot = document.getElementById(ROOT_ID);
         if (listRoot && listRoot.parentNode) listRoot.parentNode.removeChild(listRoot);
+        /* 缓存节点也要清掉，否则观察者下一次回调会把它插回来（同 1.3.60 的坑） */
+        wbmBarNode = null;
+        wbmAppendBarNode = null;
         /* 我们插进宿主的节点类名一律以 wbm- 开头，按前缀整批收走；
            设置抽屉要留着，否则关掉以后解不开。宿主自己的表单控件只清标记、不删。 */
         document.querySelectorAll('[class*="wbm-"]').forEach((node) => {
             if (node.closest && node.closest('#wbm-settings')) return;
             const tag = node.tagName;
             if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+            /* 致命坑（1.3.57 实测）：接管备选页码时给 <body> 加过 wbm-swipe-on，
+               于是 body 也命中这个前缀，静音时把 body 整块删掉——页面只剩 head，
+               白屏、document.body === null，刷新也救不回来（设置里存着 off）。
+               骨架节点只摘我们的 class，绝不删。 */
+            if (tag === 'HTML' || tag === 'HEAD' || tag === 'BODY' || node === document.body || node === document.documentElement) {
+                Array.from(node.classList || []).forEach((cls) => {
+                    if (String(cls).indexOf('wbm-') === 0) node.classList.remove(cls);
+                });
+                return;
+            }
             if (node.parentNode) node.parentNode.removeChild(node);
         });
         document.querySelectorAll('[data-wbm-locked], [data-wbm-editing]').forEach((node) => {
@@ -7806,6 +10327,7 @@ function updateEditorButton() {
     }
 
     function applyEnhanceState() {
+        syncPromptEditorCap();
         if (enhancementsOn()) {
             document.documentElement.removeAttribute('data-wbm-off');
             state.signature = '';
@@ -7816,6 +10338,10 @@ function updateEditorButton() {
             lockEntryContents();
             syncBottomRow();
             updateEditorButton();
+            try { if (featureOn('promptMgr')) hookPromptManagerExtras(); } catch (err) { /* 稍后看门狗还会补 */ }
+            try { if (featureOn('talkPreset')) ensureTalkPresetButton(); } catch (err) { /* 忽略 */ }
+            try { ensurePersonaBarLater(); } catch (err) { /* 忽略 */ }
+            try { if (featureOn('headerAlign')) { alignEntryHeadersOnce(); ensureHeaderAlignObserver(); } } catch (err) { /* 忽略 */ }
         } else {
             document.documentElement.setAttribute('data-wbm-off', '1');
             teardownInjected();
@@ -7824,29 +10350,943 @@ function updateEditorButton() {
         syncPanelNotes();
     }
 
+
+    /* ---------------- ① 正则脚本守护 ----------------
+       症状：酒馆里正则脚本会"整批失效"——刷新后全局脚本全变未启用，或者换了对话补全预设后
+       该预设携带的正则不再生效（酒馆按 预设名+接口 白名单才读它）。
+       做法：① 记下上次启用中的脚本 id，检测到"一条都不剩"就按记录恢复并提示；
+             ② 抽屉里给出当前预设的正则许可状态，一键允许。 */
+    function regexScriptList() {
+        const ctx = (window.SillyTavern && window.SillyTavern.getContext)
+            ? window.SillyTavern.getContext() : null;
+        const scripts = (ctx && ctx.extensionSettings && Array.isArray(ctx.extensionSettings.regex))
+            ? ctx.extensionSettings.regex : [];
+        return scripts;
+    }
+
+    function regexEnabledIds() {
+        return regexScriptList()
+            .filter((item) => item && item.id && item.disabled !== true)
+            .map((item) => String(item.id));
+    }
+
+    async function regexEngine() {
+        try {
+            return await import('/scripts/extensions/regex/engine.js');
+        } catch (err) {
+            console.warn('[wbm] 取不到正则扩展的接口', err);
+            return null;
+        }
+    }
+
+    async function regexPresetState() {
+        const engine = await regexEngine();
+        if (!engine || typeof engine.getCurrentPresetAPI !== 'function') return null;
+        const apiId = engine.getCurrentPresetAPI();
+        const presetName = engine.getCurrentPresetName();
+        if (!apiId || !presetName) return null;
+        const allowed = (typeof engine.isPresetScriptsAllowed === 'function')
+            ? !!engine.isPresetScriptsAllowed(apiId, presetName) : null;
+        return { apiId, presetName, allowed };
+    }
+
+    async function syncRegexPanel() {
+        const note = document.getElementById('wbm-note-regex');
+        if (!note) return;
+        const total = regexScriptList().length;
+        const enabled = regexEnabledIds().length;
+        let text = '全局正则 ' + enabled + ' / ' + total + ' 条启用';
+        const preset = await regexPresetState();
+        const btn = document.getElementById('wbm-regex-allow');
+        if (preset) {
+            text += '；当前预设「' + preset.presetName + '」'
+                + (preset.allowed ? '已允许携带正则' : '未允许携带正则');
+        }
+        if (btn) btn.style.display = (preset && preset.allowed === false) ? '' : 'none';
+        note.textContent = text;
+    }
+
+    async function allowRegexForCurrentPreset() {
+        const engine = await regexEngine();
+        if (!engine || typeof engine.getCurrentPresetAPI !== 'function') {
+            toast('warn', '取不到正则扩展，可能没有启用它');
+            return;
+        }
+        const apiId = engine.getCurrentPresetAPI();
+        const presetName = engine.getCurrentPresetName();
+        if (!apiId || !presetName) {
+            toast('warn', '当前接口没有对话补全预设，不需要这一步');
+            return;
+        }
+        engine.allowPresetScripts(apiId, presetName);
+        syncRegexPanel();
+        toast('ok', '已允许预设「' + presetName + '」携带的正则生效');
+    }
+
+    async function regexGuardCheck(options) {
+        const silent = !!(options && options.silent);
+        if (featureOn('regexGuard')) {
+            const ids = regexEnabledIds();
+            const prev = (store.regexGuard && Array.isArray(store.regexGuard.ids)) ? store.regexGuard.ids : null;
+            if (ids.length === 0 && prev && prev.length) {
+                const restore = new Set(prev);
+                let restored = 0;
+                for (const item of regexScriptList()) {
+                    if (item && restore.has(String(item.id)) && item.disabled === true) {
+                        item.disabled = false;
+                        restored += 1;
+                    }
+                }
+                if (restored) {
+                    const ctx = window.SillyTavern.getContext();
+                    if (typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+                    if (!silent) {
+                        toast('warn', '正则脚本被整体关掉了，已按上次记录恢复 ' + restored + ' 条');
+                    }
+                    syncRegexPanel();
+                    return;
+                }
+            }
+            if (ids.length && (!prev || prev.length !== ids.length || prev.join('|') !== ids.join('|'))) {
+                store.regexGuard = { ids: ids, at: Date.now() };
+                persistStore();
+            }
+        }
+        syncRegexPanel();
+    }
+
+
+    /* 人设增删改名后缓存要失效，否则浮层里还是旧名字（宿主发的事件，不轮询） */
+    function bindPersonaCacheRefresh() {
+        /* 人设抽屉是懒渲染：第一次打开时才把面板塞进 DOM。打开后补挂一次横条，
+           这样总开关重开时即使面板当时还没渲染，用户一开抽屉就补上。 */
+        try {
+            const icon = document.querySelector('#persona-management-button .drawer-icon');
+            if (icon && icon.dataset.wbmPersonaWatch !== VERSION) {
+                icon.dataset.wbmPersonaWatch = VERSION;
+                icon.addEventListener('click', () => { setTimeout(() => { try { ensurePersonaBarLater(); } catch (err) { /* 忽略 */ } }, 120); });
+            }
+        } catch (err) { /* 忽略 */ }
+        if (window.__wbmPersonaCacheBound === VERSION) return;
+        const ctx = stCtx();
+        if (!ctx || !ctx.eventSource || typeof ctx.eventSource.on !== 'function' || !ctx.eventTypes) return;
+        window.__wbmPersonaCacheBound = VERSION;
+        ['PERSONA_CHANGED', 'PERSONA_CREATED', 'PERSONA_UPDATED', 'PERSONA_RENAMED', 'PERSONA_DELETED'].forEach((name) => {
+            const type = ctx.eventTypes[name];
+            if (!type) return;
+            ctx.eventSource.on(type, () => {
+                personaDropIdCache();
+                syncPersonaBar();
+            });
+        });
+    }
+
+    /* 正则面板跟着「当前预设」走：面板文字写的就是当前预设的许可状态，
+       换预设不刷新就会显示上一个预设的结论（2026-10-22 实测：面板写着「Default」，
+       实际已经是「Izumi 1004 政委改」）。宿主在预设切换后会发 PRESET_CHANGED，
+       只挂一个监听，不做轮询。 */
+    function bindRegexPanelRefresh() {
+        if (window.__wbmRegexPanelBound === VERSION) return;
+        const ctx = stCtx();
+        if (!ctx || !ctx.eventSource || typeof ctx.eventSource.on !== 'function' || !ctx.eventTypes) return;
+        window.__wbmRegexPanelBound = VERSION;
+        let timer = null;
+        const kick = () => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => {
+                timer = null;
+                if (!enhancementsOn()) return;
+                syncRegexPanel();
+            }, 120);
+        };
+        ['PRESET_CHANGED', 'MAIN_API_CHANGED'].forEach((name) => {
+            const evt = ctx.eventTypes[name];
+            if (!evt) return;
+            try { ctx.eventSource.on(evt, kick); } catch (err) { /* 不认识这个事件就跳过 */ }
+        });
+        /* 1.3.39：换了预设就该退出排序模式（master 2026-10-22：「我们切换预设居然不自动退出编辑模式吗？
+           应该退出的吧？」）。排序态里存的是旧预设的勾选与序号，留着只会误导。
+           不按 DOM 回写顺序（skipRepair），宿主这时正在重绘。 */
+        const onPresetChanged = () => {
+            if (!pmSortOn) return;
+            try { exitPmSort({ skipRepair: true }); } catch (err) { console.warn('[wbm] 换预设退出排序失败', err); }
+        };
+        const presetEvt = ctx.eventTypes.PRESET_CHANGED;
+        if (presetEvt) { try { ctx.eventSource.on(presetEvt, onPresetChanged); } catch (err) { /* 忽略 */ } }
+    }
+
+    /* 提示词行的红色「移除」键（detach，fa-link-slash）：点一下就把条目从预设里摘掉，
+       master 2026-10-21 误点过。这里加一道确认，确认后才放行给酒馆自己的处理器。 */
+    function bindPromptDetachGuard() {
+        if (window.__wbmDetachGuard === VERSION) return;
+        window.__wbmDetachGuard = VERSION;
+
+        document.addEventListener('click', async (event) => {
+            const hit = event.target instanceof Element ? event.target.closest('.prompt-manager-detach-action') : null;
+            if (!hit) return;
+            if (window.__wbmDetachOk === true) { window.__wbmDetachOk = false; return; }
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+
+            const row = hit.closest('li');
+            const nameEl = row ? row.querySelector('.completion_prompt_manager_prompt_name, .prompt_manager_prompt_name') : null;
+            const name = (nameEl ? nameEl.textContent : '').trim() || '这条提示词';
+            // 注意：本文件的模块作用域里没有 ctx，必须每次现取
+            const ctx = SillyTavern.getContext();
+            const verdict = await ctx.callGenericPopup(
+                '要从当前预设里移除「' + name + '」吗？',
+                ctx.POPUP_TYPE.CONFIRM,
+                '',
+                { okButton: '移除', cancelButton: '取消' },
+            );
+            if (verdict !== ctx.POPUP_RESULT.AFFIRMATIVE) return;
+
+            window.__wbmDetachOk = true;
+            hit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            setTimeout(() => { window.__wbmDetachOk = false; }, 800);
+        }, true);
+    }
+
+    /* ---------------- ⑤ 人设管理：分组 + 手机折叠 ----------------
+       人设面板原生只有搜索、A-Z、分页。这里加一排分组胶囊（全部 / 未分组 / 自建组），
+       点「设置分组」在浮层里给每个头像挑组；手机端左栏整块可收起，先看当前人设与描述。 */
+    let personaBusy = false;
+
+    function personaIdOf(container) {
+        return container ? String(container.dataset.avatarId || '') : '';
+    }
+
+    function personaGroupOf(id) {
+        const map = (store.personaGroups && typeof store.personaGroups === 'object') ? store.personaGroups : {};
+        const name = map[id];
+        return (typeof name === 'string' && name.trim()) ? name.trim() : '';
+    }
+
+    function personaGroupNames() {
+        const map = (store.personaGroups && typeof store.personaGroups === 'object') ? store.personaGroups : {};
+        const set = new Set();
+        Object.keys(map).forEach((key) => {
+            const value = map[key];
+            if (typeof value === 'string' && value.trim()) set.add(value.trim());
+        });
+        return Array.from(set).sort((a, b) => String(a).localeCompare(String(b), 'zh-Hans-CN'));
+    }
+
+    function setPersonaGroup(id, group) {
+        if (!id) return;
+        if (!store.personaGroups || typeof store.personaGroups !== 'object') store.personaGroups = {};
+        const name = String(group || '').trim();
+        if (name) store.personaGroups[id] = name;
+        else delete store.personaGroups[id];
+        persistStore();
+        applyPersonaFilter();
+        syncPersonaBar();
+    }
+
+    /* 宿主的人设列表是分页渲染的（默认 5 个/页），DOM 里只有当前页。
+       只把不匹配的盒子藏起来，碰上「这一页的人设全在组里」就整页空白——
+       master 2026-10-22 报的「切换分组无效」正是这个：他那一页恰好人设都在组里。
+       做法：按组显示时临时把每页条数拉到 1000，让所有头像都进 DOM；回到「全部」还原。 */
+    let personaPagesApi = null;
+
+    async function personaHostApi() {
+        if (personaPagesApi) return personaPagesApi;
+        try {
+            const acct = await import('/scripts/util/AccountStorage.js');
+            const pmod = await import('/scripts/personas.js');
+            if (!acct || !pmod || !acct.accountStorage) return null;
+            personaPagesApi = { storage: acct.accountStorage, personas: pmod };
+        } catch (err) {
+            console.warn('[wbm] 取人设分页接口失败', err);
+            personaPagesApi = null;
+        }
+        return personaPagesApi;
+    }
+
+    function personaFilterActive() {
+        return String(store.personaFilter || '') !== '';
+    }
+
+    /* 全部头像 id 缓存：宿主每取一次都要 POST /api/avatars/get，分组计数、人数统计
+       反复触发会把这条接口打爆（master 2026-10-23 报「现在的我就已经有点卡了」）。
+       TT 版酒馆是把 userAvatars 缓存在模块级变量里——这里只借这个思路，代码是自己的。 */
+    let personaIdCache = null;
+
+    function personaDropIdCache() {
+        personaIdCache = null;
+    }
+
+    async function personaAllIds(force) {
+        if (!force && Array.isArray(personaIdCache)) return personaIdCache;
+        try {
+            const api = await personaHostApi();
+            if (api && typeof api.personas.getUserAvatars === 'function') {
+                const ids = await api.personas.getUserAvatars(false);
+                if (Array.isArray(ids)) {
+                    personaIdCache = ids.slice();
+                    return personaIdCache;
+                }
+            }
+        } catch (err) {
+            console.warn('[wbm] 取头像 id 失败', err);
+        }
+        /* 宿主接口拿不到时退回当前页 DOM，至少不让界面空掉 */
+        return Array.from(document.querySelectorAll('#user_avatar_block .avatar-container'))
+            .map((box) => personaIdOf(box))
+            .filter(Boolean);
+    }
+
+    /* 按组显示时宿主必须把整份人设都画出来，客户端才藏得掉——这是宿主的契约。
+       但每页条数只按「真实人数」取最小值：以前固定 1000，人设一多就是整页重渲 + 1000 个
+       带头像的盒子进 DOM，滚动都卡（master 2026-10-23 的原话）。 */
+    async function personaApplyPaging() {
+        const api = await personaHostApi();
+        if (!api || typeof api.personas.getUserAvatars !== 'function') return;
+        const key = 'Personas_PerPage';
+        try {
+            if (personaFilterActive()) {
+                const ids = await personaAllIds();
+                const need = Math.max(1, Array.isArray(ids) ? ids.length : 0);
+                const target = String(need);
+                if (String(api.storage.getItem(key) || '') === target) return;
+                if (!store.personaPerPageSaved) {
+                    store.personaPerPageSaved = String(api.storage.getItem(key) || '') || '5';
+                    persistStore();
+                }
+                api.storage.setItem(key, target);
+                await api.personas.getUserAvatars(true);
+                return;
+            }
+            if (store.personaPerPageSaved) {
+                const back = String(store.personaPerPageSaved) || '5';
+                store.personaPerPageSaved = '';
+                persistStore();
+                api.storage.setItem(key, back);
+                await api.personas.getUserAvatars(true);
+            }
+        } catch (err) {
+            console.warn('[wbm] 人设分页调整失败', err);
+        }
+    }
+
+    /* 分组计数：按宿主给的全部头像 id 算，不能只看当前页 */
+    async function personaGroupCounts() {
+        const out = { total: 0, none: 0, groups: {} };
+        const ids = await personaAllIds();
+        out.total = ids.length;
+        personaTotalCount = ids.length;
+        ids.forEach((id) => {
+            const group = personaGroupOf(id);
+            if (!group) out.none += 1;
+            else out.groups[group] = (out.groups[group] || 0) + 1;
+        });
+        return out;
+    }
+
+    /* 管理浮层的数据源：直接读宿主的人设表，不依赖列表 DOM。
+       宿主的 .ch_additional_info 就是「用户设定名称（选填，仅显示）」；
+       重名的几个人设只显示名字根本分不清（master 2026-10-23 的截图）。 */
+    async function personaAllRows() {
+        const ids = await personaAllIds(true);
+        const ctx = stCtx();
+        const pu = (ctx && ctx.powerUserSettings) || {};
+        const names = (pu.personas && typeof pu.personas === 'object') ? pu.personas : {};
+        const descs = (pu.persona_descriptions && typeof pu.persona_descriptions === 'object') ? pu.persona_descriptions : {};
+        personaTotalCount = ids.length;
+        const rows = ids.map((id) => {
+            const desc = descs[id] || {};
+            return {
+                id,
+                name: String(names[id] || '').trim() || String(id || '').replace(/\.[a-z0-9]+$/i, ''),
+                title: String(desc.title || '').trim(),
+                group: personaGroupOf(id),
+            };
+        });
+        rows.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN') || String(a.id).localeCompare(String(b.id)));
+        return rows;
+    }
+
+    /* 每页条数可调：按分组显示、设置分组浮层共用这一档（master 2026-10-23：
+       「按分组显示能不能也做到10个一页的分页功能？或者都改成能够自定义一页数量」）。 */
+    const WBM_PERSONA_PAGE_SIZES = [5, 10, 20, 50];
+    let personaGroupPage = 0;
+    /* 当前分组里到底有多少个：横条那句「N / M 个人设」要用它，
+       不能数 DOM——分页之后 DOM 里可见的只有当前页那几个。 */
+    let personaMatchedCount = 0;
+
+    function wbmPersonaPageSize() {
+        const n = Number(store.personaPageSize);
+        return WBM_PERSONA_PAGE_SIZES.indexOf(n) >= 0 ? n : 10;
+    }
+
+    function setPersonaPageSize(size) {
+        const n = Number(size);
+        if (WBM_PERSONA_PAGE_SIZES.indexOf(n) < 0) return wbmPersonaPageSize();
+        store.personaPageSize = n;
+        persistStore();
+        personaGroupPage = 0;
+        /* 正在按分组显示时立刻按新条数重排，不用等下次开关 */
+        if (personaFilterActive()) applyPersonaFilter();
+        return n;
+    }
+
+    /* 藏掉一行时连 img 的 src 一起摘下来：49 个不可见的头像同时解码才是真的卡，
+       只改 display 浏览器照样把图都读进内存（master 2026-10-23 的顾虑）。 */
+    function setPersonaBoxVisible(box, show) {
+        box.style.display = show ? '' : 'none';
+        const img = box.querySelector('.avatar img') || box.querySelector('img');
+        if (!img) return;
+        if (!show) {
+            const src = img.getAttribute('src');
+            if (src) {
+                img.dataset.wbmSrc = src;
+                img.removeAttribute('src');
+            }
+            return;
+        }
+        if (img.dataset.wbmSrc) {
+            img.setAttribute('src', img.dataset.wbmSrc);
+            delete img.dataset.wbmSrc;
+        }
+    }
+
+    /* 组内页码挂在我们自己的横条里、独占第二行：宿主那排工具条在 390 宽下已经没有空位，
+       插进去会被 flex 压成 0×0（1.3.43 首测在手机上量到的）。宿主分页条筛选期间藏起来。 */
+    function personaGroupPager() {
+        const bar = document.getElementById('wbm-persona-bar');
+        if (!bar) return null;
+        let node = document.getElementById('wbm-persona-grouppager');
+        if (!node) {
+            node = el('div', 'wbm-persona-grouppager');
+            node.id = 'wbm-persona-grouppager';
+            bar.appendChild(node);
+        }
+        return node;
+    }
+
+    function syncPersonaGroupPager(active, matched, pages) {
+        const host = document.getElementById('persona_pagination_container');
+        const node = personaGroupPager();
+        if (!node) return;
+        if (!active) {
+            if (node.style.display !== 'none') node.style.display = 'none';
+            if (host && host.style.display === 'none') host.style.display = '';
+            return;
+        }
+        if (host) host.style.display = 'none';
+        /* 基础样式是 display:none，内联必须写具体值——写空串会退回 none（1.3.43 首测：
+           页码在 DOM 里、文案也在，但量出来 0×0，就是这个坑） */
+        node.style.display = 'flex';
+        node.innerHTML = '';
+        const prev = el('button', 'wbm-persona-pagebtn', '‹');
+        prev.type = 'button';
+        prev.title = '上一页';
+        prev.disabled = personaGroupPage <= 0;
+        prev.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (personaGroupPage <= 0) return;
+            personaGroupPage -= 1;
+            applyPersonaFilter();
+        });
+        const next = el('button', 'wbm-persona-pagebtn', '›');
+        next.type = 'button';
+        next.title = '下一页';
+        next.disabled = personaGroupPage >= pages - 1;
+        next.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (personaGroupPage >= pages - 1) return;
+            personaGroupPage += 1;
+            applyPersonaFilter();
+        });
+        node.appendChild(prev);
+        node.appendChild(el('span', 'wbm-persona-pageinfo', (personaGroupPage + 1) + ' / ' + pages + ' 页 · ' + matched + ' 个'));
+        node.appendChild(next);
+        node.dataset.page = String(personaGroupPage + 1);
+        node.dataset.pages = String(pages);
+    }
+
+    function applyPersonaFilter() {
+        if (!featureOn('persona')) return;
+        if (!enhancementsOn()) return;
+        const active = String(store.personaFilter || '');
+        const boxes = Array.from(document.querySelectorAll('#user_avatar_block .avatar-container'));
+        personaBusy = true;
+        try {
+            const matched = [];
+            boxes.forEach((box) => {
+                const group = personaGroupOf(personaIdOf(box));
+                if (!active || (active === '__none__' ? !group : group === active)) matched.push(box);
+                /* 标签挂在名字块里（名字右边）。原来挂在 .avatar-container 上，
+                   会被整块底部挤走，看着像没有标签（master 2026-10-22 报的 ①）。 */
+                const host = box.querySelector('.character_name_block') || box;
+                let badge = box.querySelector('.wbm-persona-tag');
+                if (!badge) badge = el('span', 'wbm-persona-tag');
+                if (badge.parentNode !== host) host.appendChild(badge);
+                const label = group || '未分组';
+                if (badge.textContent !== label) badge.textContent = label;
+                badge.classList.toggle('wbm-persona-tag-none', !group);
+            });
+            const size = wbmPersonaPageSize();
+            const pages = Math.max(1, Math.ceil(matched.length / size));
+            if (personaGroupPage > pages - 1) personaGroupPage = pages - 1;
+            if (personaGroupPage < 0) personaGroupPage = 0;
+            const from = active ? personaGroupPage * size : 0;
+            const upto = active ? from + size : boxes.length;
+            const wanted = active ? new Set(matched.slice(from, upto)) : null;
+            boxes.forEach((box) => {
+                setPersonaBoxVisible(box, active ? wanted.has(box) : true);
+            });
+            personaMatchedCount = matched.length;
+            syncPersonaGroupPager(active, matched.length, pages);
+        } finally {
+            personaBusy = false;
+        }
+        syncPersonaBar();
+        personaApplyPaging().catch(() => {});
+    }
+
+    function personaFilterLabel() {
+        const active = String(store.personaFilter || '');
+        if (!active) return '全部';
+        if (active === '__none__') return '未分组';
+        return active;
+    }
+
+    /* 全部人设数（不受分页影响），浮层里算出来就记下来给横条用 */
+    let personaTotalCount = 0;
+
+    /* 切换分组后让横条自己闪一下：短促的一次高亮，不轮询、不改布局 */
+    function flashPersonaBar() {
+        const bar = document.getElementById('wbm-persona-bar');
+        if (!bar) return;
+        bar.classList.remove('wbm-flash');
+        void bar.offsetWidth;
+        bar.classList.add('wbm-flash');
+        setTimeout(() => bar.classList.remove('wbm-flash'), 700);
+    }
+
+    function syncPersonaBar() {
+        const bar = document.getElementById('wbm-persona-bar');
+        if (!bar) return;
+        const label = bar.querySelector('.wbm-persona-filter-label');
+        if (label) {
+            const text = '按分组显示：' + personaFilterLabel();
+            if (label.textContent !== text) label.textContent = text;
+        }
+        const hint = bar.querySelector('.wbm-persona-hint');
+        if (hint) {
+            const boxes = Array.from(document.querySelectorAll('#user_avatar_block .avatar-container'));
+            const total = personaTotalCount || boxes.length;
+            /* 筛选态用分组命中数：DOM 里可见的只是当前那一页，数它会变成「10 / 29」这种假数 */
+            const shown = personaFilterActive() ? personaMatchedCount : total;
+            const text = personaFilterActive() ? (shown + ' / ' + total + ' 个人设') : (total ? (total + ' 个人设') : '');
+            if (hint.textContent !== text) hint.textContent = text;
+        }
+    }
+
+    /* 列表里真正的名字在 .ch_name（见 index.html 的 #user_avatar_template）；
+       .persona_name 只有右侧控制区那份才有，取到的是空，于是界面一直显示图片文件名。 */
+    function personaDisplayName(box) {
+        const pick = (sel) => {
+            const node = box ? box.querySelector(sel) : null;
+            return node ? String(node.textContent || '').trim() : '';
+        };
+        const name = pick('.ch_name') || pick('.persona_name');
+        if (name) return name;
+        const desc = pick('.ch_description').split('\n')[0].trim();
+        if (desc) return desc;
+        return String((box && box.dataset.avatarId) || '').replace(/\.[a-z0-9]+$/i, '');
+    }
+
+    function personaRows() {
+        return Array.from(document.querySelectorAll('#user_avatar_block .avatar-container')).map((box) => {
+            const id = personaIdOf(box);
+            return { id, name: personaDisplayName(box) || id, group: personaGroupOf(id) };
+        });
+    }
+
+    /* 按分组显示：外面只留一条横条，点开这一层再选。
+       层内顺序按 master 定的：全部 → 各组（没有就不出现）→ 未分组，只做显示切换。 */
+    async function openPersonaFilterPicker() {
+        document.querySelectorAll('.wbm-picker').forEach((old) => old.remove());
+        const { mask, sheet } = makePickerShell({ flat: true });
+        sheet.appendChild(el('div', 'wbm-picker-grip'));
+        const titleRow = el('div', 'wbm-picker-titlerow');
+        titleRow.appendChild(el('div', 'wbm-picker-title', '按分组显示'));
+        const filterClose = el('button', 'wbm-picker-close', '✕');
+        filterClose.type = 'button';
+        filterClose.setAttribute('data-role', 'picker-close');
+        filterClose.title = '关闭';
+        titleRow.appendChild(filterClose);
+        sheet.appendChild(titleRow);
+        const listEl = el('div', 'wbm-picker-list');
+        sheet.appendChild(listEl);
+        document.documentElement.appendChild(mask);
+        const active = String(store.personaFilter || '');
+        const counts = await personaGroupCounts();
+        const groups = personaGroupNames().filter((name) => counts.groups[name]);
+        const items = [{ key: '', label: '全部', count: counts.total }]
+            .concat(groups.map((name) => ({ key: name, label: name, count: counts.groups[name] || 0 })))
+            .concat([{ key: '__none__', label: '未分组', count: counts.none }]);
+        listEl.innerHTML = '';
+        items.forEach((item) => {
+            if (!item.count && item.key && item.key !== '__none__') return;
+            const row = el('div', 'wbm-picker-row wbm-persona-filter-row' + (item.key === active ? ' on' : ''));
+            row.dataset.key = item.key;
+            const line = el('div', 'wbm-picker-line');
+            line.appendChild(el('span', 'wbm-picker-name', item.label));
+            line.appendChild(el('span', 'wbm-picker-count', item.count + ' 个'));
+            row.appendChild(line);
+            const pick = (event) => {
+                if (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                store.personaFilter = item.key;
+                persistStore();
+                personaGroupPage = 0;
+                closeEditorPicker();
+                syncPersonaBar();
+                applyPersonaFilter();
+                /* 「点完到底切没切」要有可感知的反馈：横条闪一下 + 一句带人数的提示 */
+                flashPersonaBar();
+                toast('ok', '已切换到「' + personaFilterLabel() + '」，' + (item.key ? (item.count + ' 个人设') : (counts.total + ' 个人设')));
+            };
+            row.addEventListener('click', pick);
+            listEl.appendChild(row);
+        });
+        if (!listEl.children.length) listEl.appendChild(el('div', 'wbm-picker-empty', '还没有分组：点右边「设置分组」给头像分组'));
+    }
+
+    /* 设置分组浮层（1.3.42）：列表不再让宿主整份重渲，而是自己按数据渲染、每页 10 个翻页。
+       每行同时显示名字与「用户设定名称」，右侧是当前分组。 */
+    async function openPersonaGroupManager() {
+        document.querySelectorAll('.wbm-picker').forEach((old) => old.remove());
+        const { mask, sheet } = makePickerShell({ flat: true });
+        sheet.appendChild(el('div', 'wbm-picker-grip'));
+        const { head, input } = buildPickerHead('搜索名字或用户设定名称');
+        const titleRow = el('div', 'wbm-picker-titlerow');
+        titleRow.appendChild(el('div', 'wbm-picker-title', '设置分组'));
+        const closeBtn = el('button', 'wbm-picker-close', '✕');
+        closeBtn.type = 'button';
+        closeBtn.setAttribute('data-role', 'picker-close');
+        closeBtn.title = '关闭';
+        titleRow.appendChild(closeBtn);
+        const listEl = el('div', 'wbm-picker-list');
+        const pager = el('div', 'wbm-persona-pager');
+        sheet.appendChild(head);
+        sheet.appendChild(titleRow);
+        sheet.appendChild(listEl);
+        sheet.appendChild(pager);
+        listEl.appendChild(el('div', 'wbm-picker-empty', '正在读取人设…'));
+        document.documentElement.appendChild(mask);
+
+        let PAGE = wbmPersonaPageSize();
+        let rows = [];
+        let page = 0;
+
+        const syncDatalist = () => {
+            const datalist = document.getElementById('wbm-persona-group-list');
+            if (!datalist) return;
+            datalist.innerHTML = '';
+            personaGroupNames().forEach((name) => {
+                const option = document.createElement('option');
+                option.value = name;
+                datalist.appendChild(option);
+            });
+        };
+
+        const hits = () => {
+            const keyword = String(input.value || '').trim().toLowerCase();
+            if (!keyword) return rows;
+            return rows.filter((row) => (row.name + ' ' + row.title + ' ' + row.id).toLowerCase().includes(keyword));
+        };
+
+        const renderPager = (total) => {
+            pager.innerHTML = '';
+            const pages = Math.max(1, Math.ceil(total / PAGE));
+            if (page > pages - 1) page = pages - 1;
+            if (page < 0) page = 0;
+            const prev = el('button', 'wbm-persona-pagebtn', '上一页');
+            prev.type = 'button';
+            prev.disabled = page <= 0;
+            prev.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (page <= 0) return;
+                page -= 1;
+                renderRows();
+            });
+            const next = el('button', 'wbm-persona-pagebtn', '下一页');
+            next.type = 'button';
+            next.disabled = page >= pages - 1;
+            next.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (page >= pages - 1) return;
+                page += 1;
+                renderRows();
+            });
+            pager.appendChild(prev);
+            pager.appendChild(el('span', 'wbm-persona-pageinfo', (page + 1) + ' / ' + pages + ' 页 · 共 ' + total + ' 个'));
+            pager.appendChild(next);
+            const sizeBtn = el('button', 'wbm-persona-sizebtn', '每页 ' + PAGE);
+            sizeBtn.type = 'button';
+            sizeBtn.title = '点一下换一档：5 / 10 / 20 / 50';
+            sizeBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const idx = WBM_PERSONA_PAGE_SIZES.indexOf(wbmPersonaPageSize());
+                setPersonaPageSize(WBM_PERSONA_PAGE_SIZES[(idx + 1) % WBM_PERSONA_PAGE_SIZES.length]);
+                PAGE = wbmPersonaPageSize();
+                page = 0;
+                renderRows();
+            });
+            pager.appendChild(sizeBtn);
+            pager.dataset.total = String(total);
+            pager.dataset.page = String(page + 1);
+        };
+
+        const openEditor = (item, row) => {
+            if (item.querySelector('.wbm-preset-saverow')) return;
+            const saver = el('div', 'wbm-preset-saverow');
+            const box = el('input', 'wbm-name-input-inline');
+            box.type = 'text';
+            box.placeholder = '组名，留空＝未分组';
+            box.value = row.group || '';
+            box.setAttribute('list', 'wbm-persona-group-list');
+            const ok = el('button', 'wbm-preset-tool', '确定');
+            ok.type = 'button';
+            const cancel = el('button', 'wbm-preset-tool', '取消');
+            cancel.type = 'button';
+            saver.appendChild(box);
+            saver.appendChild(ok);
+            saver.appendChild(cancel);
+            item.appendChild(saver);
+            box.focus();
+            box.select();
+            const done = (commit) => {
+                if (commit) {
+                    setPersonaGroup(row.id, box.value);
+                    row.group = String(box.value || '').trim();
+                    const tag = item.querySelector('.wbm-persona-row-group');
+                    if (tag) {
+                        tag.textContent = row.group || '未分组';
+                        tag.classList.toggle('wbm-persona-row-group-none', !row.group);
+                    }
+                    syncDatalist();
+                }
+                saver.remove();
+            };
+            ok.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); done(true); });
+            cancel.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); done(false); });
+            box.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); done(true); }
+                if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); done(false); }
+            });
+        };
+
+        const renderRows = () => {
+            listEl.innerHTML = '';
+            const list = hits();
+            const start = page * PAGE;
+            list.slice(start, start + PAGE).forEach((row) => {
+                const item = el('div', 'wbm-picker-row wbm-persona-row');
+                item.dataset.id = row.id;
+                item.title = row.id;
+                item.appendChild(el('span', 'wbm-picker-name', row.name));
+                if (row.title) item.appendChild(el('span', 'wbm-persona-row-title', row.title));
+                item.appendChild(el('span', 'wbm-persona-row-group' + (row.group ? '' : ' wbm-persona-row-group-none'), row.group || '未分组'));
+                const editBtn = el('button', 'wbm-preset-tool', '设置分组');
+                editBtn.type = 'button';
+                editBtn.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openEditor(item, row);
+                });
+                item.appendChild(editBtn);
+                /* 整行也能点开：行看着像按钮，只认右端那个小键就会「点了没反应」 */
+                item.addEventListener('click', (event) => {
+                    if (event.target.closest('.wbm-preset-tool') || event.target.closest('.wbm-preset-saverow')) return;
+                    openEditor(item, row);
+                });
+                listEl.appendChild(item);
+            });
+            if (!list.length) listEl.appendChild(el('div', 'wbm-picker-empty', '没有匹配的人设'));
+            renderPager(list.length);
+        };
+
+        rows = await personaAllRows();
+        syncPersonaBar();
+        syncDatalist();
+        renderRows();
+        input.addEventListener('input', () => { page = 0; renderRows(); });
+        setTimeout(() => input.focus(), 40);
+    }
+
+    function ensurePersonaCollapse() {
+        const block = document.getElementById('persona-management-block');
+        if (!block) return;
+        const left = block.querySelector('.persona_management_left_column');
+        if (!left || left.querySelector('#wbm-persona-collapse')) return;
+        const btn = el('button', 'menu_button wbm-persona-collapse', '收起人设列表');
+        btn.type = 'button';
+        btn.id = 'wbm-persona-collapse';
+        left.insertBefore(btn, left.firstChild);
+        const setCollapsed = (on) => {
+            left.classList.toggle('wbm-collapsed', !!on);
+            btn.textContent = on ? '展开人设列表' : '收起人设列表';
+        };
+        btn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setCollapsed(!left.classList.contains('wbm-collapsed'));
+        });
+        if (compactViewport()) setCollapsed(true);
+    }
+
+    /* 总开关关→开后宿主的人设面板可能还没渲染出来，ensurePersonaBar 会空跑一次；
+       这里做有限次重试，挂上就停（1.3.58 实测：不重试则 pb 一直是 0）。 */
+    let personaMountTries = 0;
+    function ensurePersonaBarLater() {
+        if (!featureOn('persona')) return;
+        if (document.getElementById('wbm-persona-bar')) { applyPersonaFilter(); return; }
+        personaMountTries = 0;
+        const tick = () => {
+            if (!featureOn('persona')) return;
+            if (document.getElementById('wbm-persona-bar')) { applyPersonaFilter(); return; }
+            personaMountTries += 1;
+            try { ensurePersonaBar(); } catch (err) { /* 下一轮再试 */ }
+            if (!document.getElementById('wbm-persona-bar') && personaMountTries < 10) {
+                setTimeout(tick, 500);
+            }
+        };
+        setTimeout(tick, 0);
+    }
+
+    function ensurePersonaBar() {
+        if (!featureOn('persona')) { teardownPersona(); return; }
+        const block = document.getElementById('persona-management-block');
+        const list = document.getElementById('user_avatar_block');
+        if (!block || !list) return;
+        const left = block.querySelector('.persona_management_left_column');
+        if (!left) return;
+        ensurePersonaCollapse();
+        if (document.getElementById('wbm-persona-bar')) {
+            applyPersonaFilter();
+            return;
+        }
+        const bar = document.createElement('div');
+        bar.id = 'wbm-persona-bar';
+        bar.className = 'wbm-persona-bar';
+        bar.innerHTML = '<button type="button" class="wbm-persona-filter">'
+            + '<span class="wbm-persona-filter-label">按分组显示：全部</span>'
+            + '</button>'
+            + '<button type="button" class="wbm-persona-manage">设置分组</button>'
+            + '<span class="wbm-persona-hint"></span>'
+            + '<datalist id="wbm-persona-group-list"></datalist>';
+        left.insertBefore(bar, list);
+        const filterBtn = bar.querySelector('.wbm-persona-filter');
+        /* 图标一律内联 SVG：宿主那套 Font Awesome 是子集，缺字形就画成空框 */
+        try {
+            if (filterBtn && !filterBtn.querySelector('.wbm-ico')) filterBtn.appendChild(wbmIcon('chev'));
+        } catch (err) { /* 图标挂了不影响功能 */ }
+        if (filterBtn) {
+            filterBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openPersonaFilterPicker().catch((err) => console.warn('[wbm] 打开分组切换失败', err));
+            });
+        }
+        bar.querySelector('.wbm-persona-manage').addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openPersonaGroupManager();
+        });
+        const observer = new MutationObserver(() => {
+            if (personaBusy) return;
+            applyPersonaFilter();
+            syncPersonaBar();
+        });
+        observer.observe(list, { childList: true, subtree: true });
+        syncPersonaBar();
+        applyPersonaFilter();
+        /* 总数要走宿主接口拿（DOM 里只有当前页那几个） */
+        personaGroupCounts().then(() => syncPersonaBar()).catch(() => {});
+    }
+
+    /* 模块级开关：master 要求按模块开，不要把每个小功能都拆成独立开关。
+       一个模块 = 一组必须一起工作的功能，关掉就整块回到原生酒馆。 */
+    function featureFlagGet(key) {
+        if (key === 'entryClickLock') return clickLockOn();
+        if (key === 'msgDblClickEdit') return store.msgDblClickEdit !== false;
+        if (key === 'editBarBothEnds') return editBarOn();
+        if (key === 'swipeTakeover') return store.swipeTakeover !== false;
+        return featureOn(key);
+    }
+    function featureFlagSet(key, on) {
+        if (key === 'entryClickLock') { store.entryClickLock = !!on; persistStore(); return; }
+        if (key === 'msgDblClickEdit') { store.msgDblClickEdit = !!on; persistStore(); return; }
+        if (key === 'editBarBothEnds') { store.editBarBothEnds = !!on; persistStore(); return; }
+        if (key === 'swipeTakeover') { store.swipeTakeover = !!on; persistStore(); return; }
+        setFeature(key, !!on);
+    }
+
     function panelNote(id, text) {
         const node = document.getElementById(id);
         if (node) node.textContent = text;
+    }
+
+    /* 提示词编辑框：只在 html 上挂一个类，样式纯 CSS，不去操作酒馆自己的按钮 */
+    function syncPromptEditorCap() {
+        try {
+            document.documentElement.classList.toggle('wbm-pmcap-on', featureFlagGet('promptEditorCap'));
+        } catch (err) { /* 页面还没 documentElement 时跳过 */ }
     }
 
     function syncPanelNotes() {
         panelNote('wbm-note-enhance', enhancementsOn()
             ? '当前：全部增强生效中。'
             : '当前：已全部关闭，界面就是原生酒馆；下面各开关的状态都保留着，重新勾上即恢复。');
-        panelNote('wbm-note-entrylock', clickLockOn()
-            ? '已开启：条目内容被锁住，单击改不动；想改就双击那个字段（复选框与下拉也是双击）。'
-            : '已关闭：条目内容点一下就能改。');
-        panelNote('wbm-note-msgdbl', store.msgDblClickEdit !== false
-            ? '已开启：双击消息正文＝点那颗铅笔；思考块与折叠美化块不处理。'
-            : '已关闭：双击正文不触发编辑，仍需点铅笔。');
-        panelNote('wbm-note-editbar', editBarOn()
-            ? '已开启：编辑期间在消息右下角再挂一排同样的按钮，顶部那排照旧，长消息不用往上翻。'
-            : '已关闭：只留消息顶部那排原生按钮。');
-        panelNote('wbm-note-swipe', store.swipeTakeover !== false
-            ? '已接管：页码显示在消息气泡下方正中；手机上点一下页码就能打开备选回复列表，长按也仍然有效。'
-            : '已关闭：页码留在美化/酒馆原本的位置，手机上需要长按才打开。');
+        panelNote('wbm-note-entrylock', featureFlagGet('entryClickLock')
+            ? '已开启：单击选中条目，双击才进入编辑。'
+            : '已关闭：单击条目即可编辑（原生行为）。');
+        panelNote('wbm-note-headeralign', featureFlagGet('headerAlign')
+            ? '已开启：表头单排时对齐各列；行折成两排时改用每格小标题。'
+            : '已关闭：表头与条目都交给原生样式。');
+        panelNote('wbm-note-msgdbl', featureFlagGet('msgDblClickEdit')
+            ? '已开启：双击消息正文进入编辑。'
+            : '已关闭：只能用铅笔按钮编辑。');
+        panelNote('wbm-note-editbar', featureFlagGet('editBarBothEnds')
+            ? '已开启：编辑框上下都有保存 / 取消栏。'
+            : '已关闭：编辑框只保留原生顶部按钮。');
+        panelNote('wbm-note-swipe', featureFlagGet('swipeTakeover')
+            ? '已开启：备选页码固定在气泡下方正中，点中间打开备选列表。'
+            : '已关闭：备选页码留在原位。');
+        panelNote('wbm-note-promptmgr', featureFlagGet('promptMgr')
+            ? '已开启：提示词管理器底部有复制 / 查找 / 排序三键，列表右上有筛选框。'
+            : '已关闭：提示词管理器只用原生界面。');
+        panelNote('wbm-note-talkpreset', featureFlagGet('talkPreset')
+            ? '已开启：预设下拉旁多一个「管理」键，可分组、重命名、排序。'
+            : '已关闭：预设下拉回到原生。');
+        panelNote('wbm-note-pmeditorcap', featureFlagGet('promptEditorCap')
+            ? '已开启：编辑框最高约占半屏，长内容在框里滚动，底部按钮始终看得见。'
+            : '已关闭：编辑框按酒馆原样展开（TT 酒馆默认就是全展开）。');
+        panelNote('wbm-note-persona', featureFlagGet('persona')
+            ? '已开启：人设面板顶部有「按分组显示」与「设置分组」。'
+            : '已关闭：人设面板保持原生，分组数据仍保留。');
+        panelNote('wbm-note-regexguard', featureFlagGet('regexGuard')
+            ? '已开启：正则被整批关掉时，按上次记录自动恢复。'
+            : '已关闭：不自动恢复，单条开关始终不受影响。');
+        panelNote('wbm-note-frontendguard', featureFlagGet('frontendGuard')
+            ? '已开启：酒馆助手漏渲染前端卡时，请它重建一次。'
+            : '已关闭：不干预酒馆助手的渲染。');
         const content = document.querySelector('#wbm-settings .inline-drawer-content');
         if (content) content.dataset.wbmIdle = enhancementsOn() ? '0' : '1';
+        syncPromptEditorCap();
     }
 
     function injectSettingsPanel() {
@@ -7875,12 +11315,19 @@ function updateEditorButton() {
             '<span class="wbm-opt-note" id="wbm-note-entrylock"></span></span>',
             '</label>',
 
+            '<label class="checkbox_label wbm-opt-label" for="wbm-opt-headeralign">',
+            '<input id="wbm-opt-headeralign" type="checkbox">',
+            '<span class="wbm-opt-text"><span class="wbm-opt-title">条目表头自动对齐</span>',
+            '<span class="wbm-opt-note" id="wbm-note-headeralign"></span></span>',
+            '</label>',
+
             '<div class="wbm-opt-group"><b>对话功能</b></div>',
             '<label class="checkbox_label wbm-opt-label" for="wbm-opt-msgdbl">',
             '<input id="wbm-opt-msgdbl" type="checkbox">',
             '<span class="wbm-opt-text"><span class="wbm-opt-title">双击正文进入编辑</span>',
             '<span class="wbm-opt-note" id="wbm-note-msgdbl"></span></span>',
             '</label>',
+
             '<label class="checkbox_label wbm-opt-label" for="wbm-opt-editbar">',
             '<input id="wbm-opt-editbar" type="checkbox">',
             '<span class="wbm-opt-text"><span class="wbm-opt-title">编辑框上下操作栏</span>',
@@ -7892,6 +11339,48 @@ function updateEditorButton() {
             '<span class="wbm-opt-text"><span class="wbm-opt-title">接管备选回复页码</span>',
             '<span class="wbm-opt-note" id="wbm-note-swipe"></span></span>',
             '</label>',
+
+            '<div class="wbm-opt-group"><b>提示词与预设</b></div>',
+            '<label class="checkbox_label wbm-opt-label" for="wbm-opt-promptmgr">',
+            '<input id="wbm-opt-promptmgr" type="checkbox">',
+            '<span class="wbm-opt-text"><span class="wbm-opt-title">提示词管理器的排序、查找与复制</span>',
+            '<span class="wbm-opt-note" id="wbm-note-promptmgr"></span></span>',
+            '</label>',
+
+            '<label class="checkbox_label wbm-opt-label" for="wbm-opt-talkpreset">',
+            '<input id="wbm-opt-talkpreset" type="checkbox">',
+            '<span class="wbm-opt-text"><span class="wbm-opt-title">预设下拉旁的「管理」键与分组</span>',
+            '<span class="wbm-opt-note" id="wbm-note-talkpreset"></span></span>',
+            '</label>',
+            '<label class="checkbox_label wbm-opt-label" for="wbm-opt-pmeditorcap">',
+            '<input id="wbm-opt-pmeditorcap" type="checkbox">',
+            '<span class="wbm-opt-text"><span class="wbm-opt-title">提示词编辑框限制高度</span>',
+            '<span class="wbm-opt-note" id="wbm-note-pmeditorcap"></span></span>',
+            '</label>',
+
+            '<div class="wbm-opt-group"><b>人设功能</b></div>',
+            '<label class="checkbox_label wbm-opt-label" for="wbm-opt-persona">',
+            '<input id="wbm-opt-persona" type="checkbox">',
+            '<span class="wbm-opt-text"><span class="wbm-opt-title">按分组显示人设与分页</span>',
+            '<span class="wbm-opt-note" id="wbm-note-persona"></span></span>',
+            '</label>',
+
+            '<div class="wbm-opt-group"><b>正则防波动</b></div>',
+            '<label class="checkbox_label wbm-opt-label" for="wbm-opt-regexguard">',
+            '<input id="wbm-opt-regexguard" type="checkbox">',
+            '<span class="wbm-opt-text"><span class="wbm-opt-title">正则被整批关闭时自动恢复</span>',
+            '<span class="wbm-opt-note" id="wbm-note-regexguard"></span></span>',
+            '</label>',
+
+            '<label class="checkbox_label wbm-opt-label" for="wbm-opt-frontendguard">',
+            '<input id="wbm-opt-frontendguard" type="checkbox">',
+            '<span class="wbm-opt-text"><span class="wbm-opt-title">前端卡漏渲染时补渲染</span>',
+            '<span class="wbm-opt-note" id="wbm-note-frontendguard"></span></span>',
+            '</label>',
+
+            '<div class="wbm-opt-group"><b>正则脚本</b></div>',
+            '<div class="wbm-opt-text"><span class="wbm-opt-note" id="wbm-note-regex"></span></div>',
+            '<button id="wbm-regex-allow" class="menu_button" type="button" style="display:none">允许当前预设使用正则</button>',
 
             '</div>',
         ].join('');
@@ -7908,59 +11397,56 @@ function updateEditorButton() {
                 store.enhanceEnabled = !!enhanceBox.checked;
                 persistStore();
                 applyEnhanceState();
-                toast('info', enhanceBox.checked
-                    ? '已开启：全部增强生效'
-                    : '已全部关闭：界面回到原生酒馆，各开关状态已保留');
+                if (enhanceBox.checked) {
+                    /* 全部关闭 → 再打开：卸载是不可逆的（人设横条要等宿主把人设面板渲染出来，
+                       提示词工具条要等管理器重绘），逐块重挂容易漏。直接重载一次最稳，
+                       代价只有一次刷新。关闭方向仍然就地卸载，不刷新。 */
+                    toast('info', '已开启：全部增强生效，正在刷新界面…');
+                    /* 酒馆的 saveSettingsDebounced 有 1 秒防抖：刷新太早会把刚改的值丢掉
+                       （1.3.58 实测 600ms 刷新后开关又变回关），这里等它落盘再刷。 */
+                    setTimeout(() => {
+                        try { window.location.reload(); } catch (err) { /* 刷不动就保持当前状态 */ }
+                    }, 2400);
+                    return;
+                }
+                toast('info', '已全部关闭：界面回到原生酒馆，各开关状态已保留');
             });
         }
-        if (lockBox) {
-            lockBox.checked = clickLockOn();
-            lockBox.addEventListener('change', () => {
-                store.entryClickLock = !!lockBox.checked;
-                persistStore();
-                lockEntryContents();
-                syncLockChip();
+        const FEATURE_ROWS = [
+            ['wbm-opt-entrylock', 'entryClickLock', '条目单击锁定、双击才改', '条目单击即可编辑'],
+            ['wbm-opt-headeralign', 'headerAlign', '条目表头自动对齐', '条目表头交给原生样式'],
+            ['wbm-opt-msgdbl', 'msgDblClickEdit', '双击正文进入编辑', '双击正文不再进入编辑'],
+            ['wbm-opt-editbar', 'editBarBothEnds', '编辑框上下操作栏', '编辑框只在顶部有按钮'],
+            ['wbm-opt-swipe', 'swipeTakeover', '接管备选回复页码', '备选页码回到原位'],
+            ['wbm-opt-promptmgr', 'promptMgr', '提示词管理器的排序、查找与复制', '提示词管理器回到原生'],
+            ['wbm-opt-talkpreset', 'talkPreset', '预设下拉旁的「管理」键与分组', '预设下拉回到原生'],
+            ['wbm-opt-pmeditorcap', 'promptEditorCap', '提示词编辑框在区块内滚动', '提示词编辑框按酒馆原样展开'],
+            ['wbm-opt-persona', 'persona', '按分组显示人设与分页', '人设面板回到原生'],
+            ['wbm-opt-regexguard', 'regexGuard', '正则被整批关闭时自动恢复', '不再自动恢复正则'],
+            ['wbm-opt-frontendguard', 'frontendGuard', '前端卡漏渲染时补渲染', '不干预酒馆助手的渲染'],
+        ];
+        FEATURE_ROWS.forEach((row) => {
+            const box = wrap.querySelector('#' + row[0]);
+            if (!box) return;
+            box.checked = featureFlagGet(row[1]);
+            box.addEventListener('change', () => {
+                const on = !!box.checked;
+                featureFlagSet(row[1], on);
+                applyFeatureToggle(row[1]);
+                if (row[1] === 'entryClickLock') { lockEntryContents(); syncLockChip(); }
+                if (row[1] === 'msgDblClickEdit') { syncBottomRow(); }
+                if (row[1] === 'editBarBothEnds') { syncBottomRow(); }
+                if (row[1] === 'swipeTakeover') { applySwipeCounterLayout(); }
                 syncPanelNotes();
-                toast('info', lockBox.checked
-                    ? '已开启：条目单击锁定、双击才改'
-                    : '已关闭：条目单击即可编辑');
+                toast('info', (on ? '已开启：' : '已关闭：') + (on ? row[2] : row[3]));
             });
-        }
-        if (msgBox) {
-            msgBox.checked = store.msgDblClickEdit !== false;
-            msgBox.addEventListener('change', () => {
-                store.msgDblClickEdit = !!msgBox.checked;
-                persistStore();
-                syncPanelNotes();
-                toast('info', msgBox.checked ? '已开启：双击正文进入编辑' : '已关闭：双击正文不再进入编辑');
-            });
-        }
-        const swipeBox = wrap.querySelector('#wbm-opt-swipe');
-        if (swipeBox) {
-            swipeBox.checked = store.swipeTakeover !== false;
-            swipeBox.addEventListener('change', () => {
-                store.swipeTakeover = !!swipeBox.checked;
-                persistStore();
-                applySwipeCounterLayout();
-                syncPanelNotes();
-                toast('info', swipeBox.checked
-                    ? '已接管页码：点击页码打开备选回复列表（手机上单击即可）'
-                    : '已放开页码：回到酒馆原生位置与长按行为');
-            });
-        }
-        if (barBox) {
-            barBox.checked = editBarOn();
-            barBox.addEventListener('change', () => {
-                store.editBarBothEnds = !!barBox.checked;
-                persistStore();
-                syncBottomRow();
-                syncPanelNotes();
-                toast('info', barBox.checked
-                    ? '已开启：编辑框右下角也有操作栏'
-                    : '已关闭：编辑框只保留顶部那排按钮');
-            });
+        });
+        const regexBtn = wrap.querySelector('#wbm-regex-allow');
+        if (regexBtn) {
+            regexBtn.addEventListener('click', () => { allowRegexForCurrentPreset(); });
         }
         syncPanelNotes();
+        regexGuardCheck({ silent: true });
     }
 
     /* ---------------- 事件（只挂 #WIMultiSelector 容器） ---------------- */
@@ -8115,7 +11601,7 @@ function updateEditorButton() {
     /* ---------------- 网络抖动兜底：样式表重试 ---------------- */
 
 /* ==== WBM_CSS_BEGIN（由 .tmp-wbm-test/patch-inline-css.py 生成，勿手改） ==== */
-const WBM_CSS = "/* 世界书增强 · 样式 v1.2.0\n   全部限定在 #WIMultiSelector / #wbm-list 之内，不碰全局，避免与鸡尾酒等扩展互相覆盖。\n   原生控件只在 [data-wbm-ready=\"1\"]（自绘列表已成功挂载）时才隐藏，\n   扩展加载失败或上游改版时属性不会写，ST 原生下拉自动保留。 */\n\n#WIMultiSelector[data-wbm-ready=\"1\"] > .range-block-range > select#world_info,\n#WIMultiSelector[data-wbm-ready=\"1\"] .range-block-range > .select2-container {\n    display: none !important;\n}\n\n#wbm-list,\n#wbm-list * { box-sizing: border-box; }\n\n/* ST 原本给 .range-block-range 的是 flex:5（= basis 0%）。这个值有两个坑：\n   ① 加 min-width:0 会让 Chrome 把它算成 0 宽（内容全被挤成一字一行）；\n   ② 保持 min-width:auto 时，长书名的 min-content 会把它撑得比容器还宽，\n      列表溢出到右栏下面、「收起添加」按钮点不到。\n   改成 basis 100% 后宽度严格等于容器宽，两条坑一起没了。 */\n#WIMultiSelector[data-wbm-ready=\"1\"] > .range-block-range {\n    flex: 0 0 100%;\n    min-width: 0;\n}\n\n/* flex 子项默认 min-width:auto，不接受小于内容宽度。世界书名字是 nowrap，\n   长名会把整条链路顶宽、把「收起添加」按钮推出屏幕。整条链都放开 0。\n   注意：不要给 `#WIMultiSelector > .range-block-range` 加 min-width:0 就完事——\n   见上面的注释，光加 min-width:0 会让它塌成 0 宽。 */\n#WIMultiSelector[data-wbm-ready=\"1\"],\n#wbm-list,\n#wbm-list .wbm-header,\n#wbm-list .wbm-actives,\n#wbm-list .wbm-addpanel,\n#wbm-list .wbm-addlist,\n#wbm-list .wbm-row,\n#wbm-list .wbm-addrow {\n    min-width: 0;\n    max-width: 100%;\n}\n\n#wbm-list {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    margin-top: 6px;\n    width: 100%;\n}\n\n/* ---------- 头部 ---------- */\n#wbm-list .wbm-header {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    justify-content: space-between;\n    gap: 6px;\n    min-width: 0;\n}\n#wbm-list .wbm-title {\n    flex: 1 1 auto;\n    min-width: 0;\n    font-size: 12px;\n    opacity: .8;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n#wbm-list .wbm-add {\n    flex: 0 0 auto;\n    padding: 3px 9px;\n    font-size: 11.5px;\n    line-height: 1.3;\n    white-space: nowrap;\n    border: 1px solid var(--SmartThemeBorderColor, #666);\n    background: transparent;\n    color: inherit;\n    border-radius: 999px;\n    cursor: pointer;\n}\n\n/* ---------- 搜索框 ---------- */\n#wbm-list .wbm-search {\n    width: 100%;\n    padding: 6px 10px;\n    font-size: 13px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .15));\n    background: var(--black30a, rgba(0, 0, 0, .2));\n    color: inherit;\n    outline: none;\n}\n\n/* ---------- 提示 ---------- */\n#wbm-list .wbm-tip { font-size: 11px; opacity: .5; }\n\n/* ---------- 已启用列表：折叠是 5 行高的滑动窗，展开是 15 行 ---------- */\n#wbm-list .wbm-actives {\n    display: flex;\n    flex-direction: column;\n    gap: 5px;\n    max-height: calc(33px * 5 + 5px * 4);\n    overflow-y: auto;\n    overflow-x: hidden;\n    /* 不给 contain：列表滑到尽头（或本身不够滑）时，余下的手势要继续交给外层世界书面板，\n       否则收起态只有 5 行高、滑条行程极短，手指在里面划就是\"划不动\"的感觉 */\n    overscroll-behavior: auto;\n    /* 把重排限制在列表内部：键盘收起触发整页重排时，外部不必重算每一行 */\n    contain: content;\n}\n#wbm-list.expanded .wbm-actives,\n#wbm-list.searching .wbm-actives {\n    max-height: calc(33px * 15 + 5px * 14);\n}\n#wbm-list .wbm-row {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    padding: 6px 10px;\n    min-height: 33px;\n    border-radius: 9px;\n    background: var(--SmartThemeBlurTintColor, rgba(255, 255, 255, .06));\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .15));\n    cursor: pointer;\n}\n#wbm-list .wbm-row.editing { border-color: var(--SmartThemeQuoteColor, #c9a86a); }\n#wbm-list .wbm-row.confirming { border-color: #c0392b; }\n#wbm-list .wbm-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 14px;\n}\n#wbm-list .wbm-hint { flex: 0 0 auto; font-size: 11px; opacity: .55; }\n#wbm-list .wbm-kill {\n    flex: 0 0 auto;\n    padding: 2px 8px;\n    font-size: 12px;\n    border: 1px solid var(--SmartThemeBorderColor, #666);\n    background: transparent;\n    color: inherit;\n    border-radius: 999px;\n    cursor: pointer;\n}\n#wbm-list .wbm-row.confirming .wbm-kill { border-color: #c0392b; color: #e74c3c; }\n\n/* ---------- 展开 / 收起 ---------- */\n#wbm-list .wbm-more {\n    align-self: center;\n    padding: 4px 14px;\n    font-size: 12px;\n    opacity: .85;\n    border: 1px solid var(--SmartThemeBorderColor, #666);\n    background: transparent;\n    color: inherit;\n    border-radius: 999px;\n    cursor: pointer;\n}\n\n/* ---------- 添加面板 ---------- */\n/* 与已启用列表同一款式：不套外框，直接是搜索框 + 同形制的行，右边自然对齐 */\n#wbm-list .wbm-addpanel {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    padding: 0;\n    border: none;\n    background: none;\n    border-radius: 0;\n}\n#wbm-list .wbm-addlist {\n    display: flex;\n    flex-direction: column;\n    gap: 4px;\n    /* 固定像素高度：vh 会随手机键盘弹出而变，一变小一变大就是两次整页重排 */\n    max-height: 280px;\n    overflow-y: auto;\n    overflow-x: hidden;\n    /* 同上：到底后把余下的滑动交还给面板 */\n    overscroll-behavior: auto;\n    contain: content;\n}\n#wbm-list .wbm-addrow {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    padding: 6px 10px;\n    min-height: 33px;\n    border-radius: 9px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .15));\n    background: var(--SmartThemeBlurTintColor, rgba(255, 255, 255, .06));\n    cursor: pointer;\n}\n#wbm-list .wbm-addrow:hover { background: rgba(255, 255, 255, .05); }\n#wbm-list .wbm-addrow.on {\n    border-color: rgba(120, 200, 140, .6);\n    background: rgba(120, 200, 140, .12);\n}\n#wbm-list .wbm-addname {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 14px;\n}\n#wbm-list .wbm-addmark { flex: 0 0 auto; font-size: 12px; opacity: .75; }\n#wbm-list .wbm-addrow.on .wbm-addmark { color: #7ec890; opacity: 1; }\n#wbm-list .wbm-none,\n#wbm-list .wbm-empty { font-size: 12px; opacity: .6; padding: 4px 2px; }\n\n@media (max-width: 1000px) {\n    /* 手机上让世界书区独占一整行，避免被左侧栏挤到溢出（只在已接管时生效） */\n    #WIMultiSelector[data-wbm-ready=\"1\"] { flex: 1 1 100% !important; width: 100% !important; }\n    /* 自绘列表的头部已经写明\"已启用 N 本\"，ST 那行提示可省 */\n    #WIMultiSelector[data-wbm-ready=\"1\"] > .range-block-title { display: none; }\n    #wbm-list .wbm-addlist { max-height: 260px; }\n    /* 整块列表区左右各留 12px：让头部、搜索框、已启用列表、添加面板、展开按钮\n       一起缩进（视觉对齐），留白不属于任何滚动容器，手指落在上面就是拖整个面板。 */\n    #wbm-list { padding: 0 12px; }\n    /* 「全局世界书激活设置」那一栏：常态就占满整行，不要点开之后才变宽 */\n    #WorldInfo .range-block > .inline-drawer { width: 100%; flex: 1 1 100%; min-width: 0; }\n    #WorldInfo .range-block > .inline-drawer > .inline-drawer-header { width: 100%; box-sizing: border-box; }\n}\n\n/* ---------- 「选择以编辑」：手机端用仿原生的全屏列表 + 顶部搜索 ---------- */\n.wbm-editor-wrap { display: none; }\n\n@media (max-width: 1000px) {\n    #world_editor_select { display: none !important; }\n    /* 酒馆给这个下拉套出来的 select2 替身必须一起藏：只藏了原生 select 的话，\n       窄屏上会出现\"两个选择器\"并排抢宽度，书名一长就把右边的分类图标挤出行外。 */\n    #world_popup .wbm-world-row .select2-container { display: none !important; }\n\n    .wbm-editor-wrap {\n        display: block;\n        flex: 1 1 auto;\n        min-width: 0;\n        width: auto;\n    }\n    .wbm-editor-btn {\n        display: block;\n        width: 100%;\n        min-width: 110px;\n        padding: 6px 10px;\n        font-size: 13px;\n        text-align: center;\n        border-radius: 8px;\n        border: 1px solid var(--SmartThemeBorderColor, #666);\n        background: var(--black30a, rgba(0, 0, 0, .2));\n        color: inherit;\n        cursor: pointer;\n        white-space: nowrap;\n        overflow: hidden;\n        text-overflow: ellipsis;\n        position: relative;\n        z-index: 1;\n    }\n    .wbm-editor-btn.active { border-color: var(--SmartThemeQuoteColor, #c9a86a); }\n}\n\n/* 全屏选择器：外观贴 ST 原生弹窗 + 手机原生 sheet 的手势暗示，只为在顶部加一条实时搜索。\n   全部为静态样式与一次性动画，没有滚动监听也没有常驻 rAF。 */\n.wbm-picker {\n    position: fixed;\n    inset: 0;\n    z-index: 2147483000;\n    display: flex;\n    /* 垂直居中（原来是 flex-end 贴底）：手机键盘弹起时，贴底的窗口会被输入法整块盖住；\n       居中的话窗口主体落在屏幕中段，输入框和列表都还在可视范围里。 */\n    align-items: center;\n    justify-content: center;\n    background: rgba(0, 0, 0, .6);\n    animation: wbm-mask-in .14s ease-out both;\n}\n.wbm-picker.closing { animation: wbm-mask-out .16s ease-in both; }\n\n.wbm-picker-sheet {\n    display: flex;\n    flex-direction: column;\n    width: 100%;\n    max-width: 760px;\n    /* dvh 随键盘变化，键盘弹起时窗口自己变矮；720px 是桌面上的上限，免得窗口过大 */\n    max-height: min(82dvh, 720px);\n    margin: 8px;\n    border-radius: 16px;\n    border: 1px solid var(--SmartThemeBorderColor, #444);\n    background: var(--SmartThemeBlurTintColor, #1c1c26);\n    /* 顶沿一道极淡高光，面板才不像一块贴上去的灰板 */\n    box-shadow: 0 -2px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .07);\n    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));\n    overflow: hidden;\n    animation: wbm-sheet-in .18s cubic-bezier(.2, .8, .2, 1) both;\n}\n.wbm-picker.closing .wbm-picker-sheet { animation: wbm-sheet-out .16s ease-in both; }\n\n/* 抓握条：暗示这是从底部升起、可下滑收起的面板 */\n.wbm-picker-grip {\n    flex: 0 0 auto;\n    width: 36px;\n    height: 4px;\n    margin: 8px auto 0;\n    border-radius: 999px;\n    background: var(--SmartThemeBorderColor, rgba(255, 255, 255, .3));\n    opacity: .8;\n}\n\n.wbm-picker-head {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    padding: 8px 10px 10px;\n    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .3));\n}\n\n/* 搜索胶囊：视觉重心给它，ST 的 .text_pole 方框不再参与 */\n.wbm-picker-field {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    flex: 1 1 auto;\n    min-width: 0;\n    height: 42px;\n    padding: 0 14px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .16));\n    background: rgba(128, 128, 128, .22);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 8%, transparent);\n    transition: border-color .15s ease;\n}\n.wbm-picker-field:focus-within { border-color: var(--SmartThemeQuoteColor, #c9a86a); }\n.wbm-picker-icon {\n    flex: 0 0 auto;\n    width: 16px;\n    font-size: 13px;\n    text-align: center;\n    opacity: .6;\n}\n.wbm-picker-search {\n    flex: 1 1 auto;\n    min-width: 0;\n    width: auto;\n    height: 100%;\n    margin: 0;\n    padding: 0;\n    border: none;\n    border-radius: 0;\n    background: transparent;\n    box-shadow: none;\n    outline: none;\n    color: inherit;\n    caret-color: var(--SmartThemeQuoteColor, currentColor);\n    font-family: inherit;\n    font-size: 15px;\n}\n.wbm-picker-search::-webkit-search-cancel-button,\n.wbm-picker-search::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }\n.wbm-picker-search::placeholder { color: inherit; opacity: .45; }\n\n/* ✕ 只做幽灵按钮，不跟搜索抢视觉；按下去才有底色 */\n.wbm-picker-close {\n    flex: 0 0 auto;\n    width: 38px;\n    height: 38px;\n    padding: 0;\n    border: none;\n    border-radius: 11px;\n    background: transparent;\n    color: inherit;\n    font-size: 15px;\n    line-height: 1;\n    opacity: .7;\n    cursor: pointer;\n}\n.wbm-picker-close:active {\n    background: rgba(128, 128, 128, .28);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 16%, transparent);\n    opacity: 1;\n}\n\n.wbm-picker-list {\n    flex: 1 1 auto;\n    min-height: 0;\n    overflow-y: auto;\n    overflow-x: hidden;\n    overscroll-behavior: contain;\n    padding: 6px 8px 10px;\n    /* 上下渐隐，一眼看出还能继续滚；纯 CSS，没有滚动监听 */\n    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 4px, #000 calc(100% - 8px), transparent 100%);\n    mask-image: linear-gradient(to bottom, transparent 0, #000 4px, #000 calc(100% - 8px), transparent 100%);\n}\n\n/* 行改成内缩的圆角块：选中行才浮主题色底，其余只在按下时给反馈 */\n.wbm-picker-row {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    min-height: 48px;\n    margin: 2px 0;\n    padding: 0 12px;\n    border-radius: 10px;\n    font-size: 16px;\n    cursor: pointer;\n    transition: background-color .12s ease;\n}\n.wbm-picker-row:active {\n    background: rgba(128, 128, 128, .18);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 12%, transparent);\n}\n.wbm-picker-row.active {\n    background: rgba(128, 128, 128, .16);\n    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #c9a86a) 16%, transparent);\n    /* 左沿一道主题色细条：比纯底色更容易一眼认出\"当前编辑的是这本\" */\n    box-shadow: inset 3px 0 0 var(--SmartThemeQuoteColor, #c9a86a);\n}\n.wbm-picker-row.active .wbm-picker-name { font-weight: 600; }\n.wbm-picker-exit { min-height: 44px; font-size: 15px; opacity: .72; }\n\n/* 分栏标题：粘在列表顶端，长名单滚下去也知道自己在哪一组。\n   底色跟面板本体取同一个变量，滚动时不会透出下面的行。 */\n.wbm-picker-group {\n    position: sticky;\n    top: 0;\n    z-index: 1;\n    display: flex;\n    align-items: baseline;\n    gap: 8px;\n    margin: 6px 0 2px;\n    padding: 8px 12px 6px;\n    background: var(--SmartThemeBlurTintColor, #1c1c26);\n}\n\n.wbm-picker-group-title {\n    color: var(--SmartThemeQuoteColor, inherit);\n    font-size: 13px;\n    letter-spacing: .4px;\n    opacity: .9;\n}\n\n.wbm-picker-group-count {\n    font-size: 12px;\n    opacity: .55;\n}\n\n/* 悬浮窗的标题行（世界书分类用；「选择以编辑」不显示，保持原样） */\n.wbm-picker-title {\n    flex: 0 0 auto;\n    padding: 2px 18px 8px;\n    font-size: 15px;\n    font-weight: 600;\n    letter-spacing: .3px;\n    color: var(--SmartThemeQuoteColor, inherit);\n}\n\n/* 「世界书分类」入口：一枚图标，紧跟在「选择以编辑」右侧（两者都是\"挑一本书\"）。\n   尺寸按手指能点中来做，不靠缩小换空间。 */\n.wbm-cat-btn {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 34px;\n    height: 32px;\n    margin: 0;\n    padding: 0;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, #666);\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 8%, transparent);\n    color: inherit;\n    cursor: pointer;\n}\n\n.wbm-cat-btn:hover {\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n}\n\n.wbm-cat-btn .fa-solid {\n    font-size: 14px;\n    line-height: 1;\n}\n\n/* 手机端用来把「世界书选择」那排折成两排的零高节点；桌面不需要，常态关掉 */\n.wbm-rowbreak { display: none; }\n\n/* ---------- 全局启用预设：世界书面板里「Active World(s)」下面的一行 ---------- */\n.wbm-preset-row {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    width: 100%;\n    margin-top: 6px;\n}\n\n.wbm-preset-row .wbm-favbar-label { flex: 0 0 auto; }\n\n/* 看起来像下拉的按钮：点开是我们自己的浮层（原生 select 改不了选项字体） */\n.wbm-preset-btn {\n    flex: 1 1 8em;\n    min-width: 0;\n    height: 30px;\n    padding: 0 8px;\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    font-family: inherit;\n    font-size: 12px;\n    border-radius: 6px;\n    text-align: left;\n}\n\n.wbm-preset-btn-text {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-preset-caret {\n    flex: 0 0 auto;\n    width: 0;\n    height: 0;\n    border-left: 4px solid transparent;\n    border-right: 4px solid transparent;\n    border-top: 5px solid currentColor;\n    opacity: .7;\n}\n\n/* 预设浮层里每行右侧的本数：等宽小字，跟名字拉开层级 */\n.wbm-picker-count {\n    flex: 0 0 auto;\n    margin-left: auto;\n    padding-left: 8px;\n    font-family: ui-monospace, \"Cascadia Mono\", Consolas, \"Courier New\", monospace;\n    font-size: 11px;\n    letter-spacing: .5px;\n    opacity: .7;\n    white-space: nowrap;\n}\n\n/* 预设行：本数直接顶到最右（不再让单选圈占住右边），\n   当前那套靠整行高亮 + 名字加粗区分 */\n.wbm-preset-opt .wbm-picker-name { flex: 1 1 auto; }\n\n/* 预设行里键多（分组/改名/覆盖/删除），窄屏允许折一行 */\n.wbm-preset-opt {\n    flex-wrap: wrap;\n    row-gap: 4px;\n}\n\n.wbm-preset-opt .wbm-picker-radio { display: none; }\n\n/* 四个小键的容器：电脑端仍排在名字右边，本数照旧顶到最右 */\n.wbm-preset-opt .wbm-preset-tools {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    flex: 0 0 auto;\n    margin-left: 8px;\n}\n\n.wbm-preset-opt .wbm-preset-tools .wbm-preset-tool { margin-left: 0; }\n\n/* 手机端：名字与「N 本」在第二行，四个小键整格挪到下方靠右。\n   之前四个键挤在名字右边（合计两百多像素），长名字只剩几十像素、全被省略号吃掉。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    .wbm-preset-opt { padding-top: 7px; padding-bottom: 7px; }\n    .wbm-preset-opt .wbm-picker-name { order: 1; }\n    .wbm-preset-opt .wbm-picker-count { order: 2; }\n    .wbm-preset-opt .wbm-preset-tools {\n        order: 3;\n        flex: 0 0 100%;\n        justify-content: flex-end;\n        margin: 2px 0 0;\n    }\n}\n\n.wbm-preset-opt.active .wbm-picker-name::before {\n    content: \"✓ \";\n    color: var(--SmartThemeQuoteColor, inherit);\n}\n\n.wbm-preset-save {\n    flex: 0 0 auto;\n    height: 30px;\n    padding: 0 11px;\n    border-radius: 999px;\n    font-size: 12px;\n    line-height: 1;\n}\n\n/* 存名字的小行：留空就用\"预设N\"，所以占位提示里写的就是那个默认名 */\n.wbm-preset-saverow {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    width: 100%;\n}\n\n.wbm-preset-saverow[hidden] { display: none; }\n\n.wbm-preset-name {\n    flex: 1 1 8em;\n    min-width: 0;\n    height: 30px;\n    font-family: inherit;\n    font-size: 13px;\n}\n\n/* ---------- 预设管理（在分类面板里）：一项一张卡片，项与项之间留白 ---------- */\n.wbm-preset-sect { padding-top: 10px; }\n\n.wbm-preset-list {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    padding: 6px 14px 0;\n}\n\n.wbm-preset-item {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    padding: 8px;\n    border-radius: 9px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);\n}\n\n/* 第一行：名字占满左侧，本数顶到最右；第二行按键右对齐 */\n.wbm-preset-item-line {\n    display: flex;\n    align-items: baseline;\n    gap: 8px;\n    width: 100%;\n}\n\n.wbm-preset-item-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    font-size: 13px;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-preset-item-name.on {\n    color: var(--SmartThemeQuoteColor, inherit);\n    font-weight: 600;\n}\n\n.wbm-preset-item-count {\n    flex: 0 0 auto;\n    margin-left: auto;\n    font-family: ui-monospace, \"Cascadia Mono\", Consolas, \"Courier New\", monospace;\n    font-size: 11px;\n    letter-spacing: .5px;\n    opacity: .72;\n    white-space: nowrap;\n}\n\n.wbm-preset-actions {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 6px;\n    justify-content: flex-end;\n    width: 100%;\n}\n\n.wbm-preset-item .wbm-chip {\n    flex: 0 0 auto;\n    height: 30px;\n    padding: 0 10px;\n    border-radius: 999px;\n    font-size: 12px;\n    line-height: 1;\n}\n\n.wbm-preset-item .wbm-chip.danger {\n    color: var(--SmartThemeEmColor, #d08a8a);\n    border-color: var(--SmartThemeEmColor, rgba(208, 138, 138, .6));\n}\n\n.wbm-preset-item .wbm-preset-name { flex: 1 1 6em; }\n\n/* ---- 预设分组：组名一行（名字 + 几套 + 改名/删除），下面是该组的预设卡片 ---- */\n.wbm-preset-group-head {\n    display: flex;\n    align-items: center;\n    flex-wrap: wrap;\n    gap: 8px;\n    margin: 8px 0 2px;\n    padding: 4px 2px 4px 6px;\n    border-left: 2px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n}\n\n.wbm-preset-group-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 13px;\n    font-weight: 600;\n    color: var(--SmartThemeQuoteColor, inherit);\n}\n\n.wbm-preset-group-count {\n    flex: 0 0 auto;\n    font-family: ui-monospace, \"Cascadia Mono\", Consolas, \"Courier New\", monospace;\n    font-size: 11px;\n    letter-spacing: .5px;\n    opacity: .7;\n    white-space: nowrap;\n}\n\n.wbm-preset-group-actions {\n    flex: 0 0 auto;\n    display: flex;\n    gap: 4px;\n}\n\n.wbm-preset-group-actions .wbm-chip {\n    height: 26px;\n    padding: 0 9px;\n    border-radius: 999px;\n    font-size: 11px;\n    line-height: 1;\n}\n\n.wbm-group-rename-input {\n    flex: 1 1 100%;\n    margin: 2px 0 4px;\n}\n\n.wbm-preset-group-actions .wbm-chip.danger {\n    color: var(--SmartThemeEmColor, #d08a8a);\n    border-color: var(--SmartThemeEmColor, rgba(208, 138, 138, .6));\n}\n\n/* 浮层里的分组小标题（不可点） */\n.wbm-picker-group-label {\n    padding: 10px 14px 4px;\n    font-size: 12px;\n    font-weight: 600;\n    color: var(--SmartThemeQuoteColor, inherit);\n    opacity: .85;\n}\n\n/* 浮层里每套预设右侧的小键：分组 / 删除（删除第一下变「确认」） */\n.wbm-preset-tool {\n    flex: 0 0 auto;\n    margin-left: 8px;\n    padding: 3px 9px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1.2;\n    cursor: pointer;\n}\n\n.wbm-preset-tool.armed {\n    border-color: var(--SmartThemeEmColor, rgba(208, 138, 138, .7));\n    color: var(--SmartThemeEmColor, #d08a8a);\n    font-weight: 600;\n}\n\n/* 分组管理区（分组浮层里的组名行，可改名 / 删除） */\n.wbm-group-mgmt {\n    padding: 4px 14px 2px;\n}\n\n.wbm-group-mgmt-row {\n    display: flex;\n    align-items: center;\n    flex-wrap: wrap;\n    gap: 8px;\n    padding: 6px 8px;\n    margin-bottom: 6px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);\n}\n\n.wbm-group-mgmt-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    font-size: 13px;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-group-mgmt-tools {\n    flex: 0 0 auto;\n    display: flex;\n    gap: 6px;\n}\n\n.wbm-name-input-inline {\n    width: 100%;\n    height: 30px;\n    font-size: 13px;\n}\n\n/* 分类面板里显示这套预设属于哪一组（只做提示，不给操作） */\n.wbm-preset-item-group {\n    flex: 0 0 auto;\n    font-size: 11px;\n    opacity: .65;\n    white-space: nowrap;\n}\n\n/* 新建分组那一行（浮层底部） */\n.wbm-group-new {\n    padding: 8px 14px 12px;\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));\n}\n\n\n/* 可横滑的条：右端渐隐，告诉手指右边还有东西；滑到底（data-xh=\"end\"）渐隐自动消失。\n   状态由 JS 写在 data-xh 上，滚动时才写，没有常驻开销。 */\n.wbm-batch-bar[data-xh=\"start\"],\n.wbm-batch-bar[data-xh=\"mid\"],\n.wbm-entry-favbar[data-xh=\"start\"],\n.wbm-entry-favbar[data-xh=\"mid\"],\n.wbm-favbar[data-xh=\"start\"],\n.wbm-favbar[data-xh=\"mid\"] {\n    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), rgba(0, 0, 0, 0));\n    mask-image: linear-gradient(to right, #000 calc(100% - 40px), rgba(0, 0, 0, 0));\n}\n\n/* 电脑端：「选择以编辑」是酒馆自己的 select2，分组靠 <optgroup> 传下去，\n   这里只给它的分组标题上主题色，让它和手机端的分栏长得一样 */\n/* ---------- 世界书分类面板：两段（绑定中 / 未绑定）+ 小组行 ---------- */\n.wbm-cat-sect {\n    padding: 2px 0 10px;\n}\n\n.wbm-cat-sect + .wbm-cat-sect {\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));\n    padding-top: 10px;\n}\n\n.wbm-cat-sect-head {\n    display: flex;\n    align-items: baseline;\n    gap: 8px;\n    padding: 6px 14px 4px;\n}\n\n.wbm-cat-sect-title {\n    font-size: 13px;\n    letter-spacing: .5px;\n    color: var(--SmartThemeQuoteColor, inherit);\n}\n\n/* 分类面板顶部的搜索条：输入框 + 两个模式键 */\n.wbm-cat-search {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    padding: 0 12px 8px;\n    flex-wrap: nowrap;\n}\n\n.wbm-cat-input {\n    flex: 1 1 auto;\n    min-width: 0;\n    height: 32px;\n}\n\n.wbm-cat-search .wbm-chip-sm {\n    flex: 0 0 auto;\n    height: 32px;\n}\n\n/* 归属排法说明：一行小灰字，让用户不用猜\"这本书为什么不在全局那组\" */\n.wbm-cat-note {\n    padding: 0 14px 8px;\n    font-size: 11.5px;\n    line-height: 1.5;\n    opacity: .62;\n}\n\n/* 还没扫描时的提醒：换成强调色，和普通说明区分开 */\n.wbm-cat-note.wbm-cat-warn {\n    opacity: .95;\n    color: var(--SmartThemeEmColor, #e1ecaa);\n}\n\n.wbm-cat-group {\n    margin: 0 6px;\n    border-radius: 8px;\n}\n\n.wbm-cat-group-head {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    padding: 9px 10px;\n    border-radius: 8px;\n    cursor: pointer;\n}\n\n.wbm-cat-group-head:hover {\n    background: rgba(128, 128, 128, .10);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 7%, transparent);\n}\n\n.wbm-cat-group-head.open {\n    background: rgba(128, 128, 128, .14);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 10%, transparent);\n}\n\n.wbm-cat-caret {\n    flex: 0 0 auto;\n    width: 12px;\n    font-size: 11px;\n    opacity: .7;\n}\n\n.wbm-cat-group-title {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 14px;\n}\n\n/* 交叉提示：一句话，不落在每一行上 */\n.wbm-cat-cross {\n    flex: 0 0 auto;\n    font-size: 11px;\n    opacity: .62;\n}\n\n.wbm-cat-scanhint {\n    flex: 0 0 auto;\n    font-size: 11px;\n    color: var(--SmartThemeQuoteColor, inherit);\n    opacity: .9;\n}\n\n/* 组内滚动：展开一组时只在这块里滚，别的组不被推走 */\n.wbm-cat-books {\n    max-height: 60vh;\n    overflow-y: auto;\n    overscroll-behavior-y: contain;\n    padding: 2px 0 6px;\n}\n\n/* 交叉标记：零文字的圆点，悬停才说明 */\n.wbm-cat-dot {\n    flex: 0 0 auto;\n    width: 6px;\n    height: 6px;\n    margin-right: 8px;\n    border-radius: 50%;\n    background: var(--SmartThemeQuoteColor, rgba(200, 170, 110, .9));\n    opacity: .85;\n}\n\n.wbm-cat-check {\n    flex: 0 0 auto;\n    width: 18px;\n    height: 18px;\n    margin: 0 2px 0 8px;\n    accent-color: var(--SmartThemeQuoteColor, #c9a86a);\n}\n\n.wbm-cat-scanbar {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    flex-wrap: wrap;\n    padding: 2px 12px 8px;\n}\n\n.wbm-cat-scanstate {\n    flex: 1 1 140px;\n    min-width: 0;\n    font-size: 12px;\n    line-height: 1.5;\n    opacity: .75;\n}\n\n.wbm-cat-delbar {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    flex-wrap: wrap;\n    padding: 8px 12px 10px;\n    border-top: 1px dashed var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n}\n\n.wbm-cat-del-label {\n    flex: 1 1 100%;\n    font-size: 12px;\n    line-height: 1.5;\n    opacity: .85;\n}\n\n.select2-results__group,\n.select2-results__option--group {\n    color: var(--SmartThemeQuoteColor, inherit);\n    background: transparent;\n    font-size: .82em;\n    font-weight: 600;\n    letter-spacing: .3px;\n    padding: 6px 8px 2px;\n    cursor: default;\n}\n\n.wbm-picker-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n/* 圆环 → 选中时填主题色并打勾 */\n.wbm-picker-radio {\n    position: relative;\n    flex: 0 0 auto;\n    width: 20px;\n    height: 20px;\n    border-radius: 50%;\n    border: 2px solid var(--SmartThemeBorderColor, rgba(170, 170, 170, .9));\n    box-sizing: border-box;\n    transition: background-color .12s ease, border-color .12s ease;\n}\n.wbm-picker-row.active .wbm-picker-radio {\n    border-color: var(--SmartThemeQuoteColor, #d4b06a);\n    background: var(--SmartThemeQuoteColor, #d4b06a);\n}\n.wbm-picker-row.active .wbm-picker-radio::after {\n    content: '';\n    position: absolute;\n    left: 50%;\n    top: 50%;\n    width: 5px;\n    height: 9px;\n    border: solid var(--SmartThemeBlurTintColor, #1c1c26);\n    border-width: 0 2px 2px 0;\n    box-sizing: border-box;\n    transform: translate(-50%, -58%) rotate(42deg);\n}\n\n.wbm-picker-empty {\n    padding: 26px 12px;\n    text-align: center;\n    font-size: 14px;\n    opacity: .55;\n}\n\n/* 移动 / 复制：标题行 + 底部两个动作按钮 */\n/* 搜索面开关（标题 / 关键词 / 正文）：默认全开，可逐个关掉；关掉的变暗只剩描边 */\n.wbm-picker-filters {\n    flex: 0 0 auto;\n    display: flex;\n    gap: 8px;\n    padding: 2px 12px 0;\n}\n.wbm-picker-chip {\n    flex: 0 0 auto;\n    height: 30px;\n    padding: 0 13px;\n    border-radius: 999px;\n    border: 1px solid rgba(128, 128, 128, .45);\n    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 30%, transparent);\n    background: transparent;\n    color: inherit;\n    font-family: inherit;\n    font-size: 13px;\n    line-height: 1;\n    opacity: .55;\n    cursor: pointer;\n    transition: opacity .12s ease, background-color .12s ease, border-color .12s ease;\n}\n.wbm-picker-chip.on {\n    opacity: 1;\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n    background: rgba(128, 128, 128, .18);\n    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #c9a86a) 16%, transparent);\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-weight: 600;\n}\n.wbm-picker-chip:active {\n    background: rgba(128, 128, 128, .28);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 16%, transparent);\n}\n\n.wbm-picker-title {\n    flex: 0 0 auto;\n    padding: 10px 12px 2px;\n    font-size: 13px;\n    opacity: .8;\n    overflow-wrap: anywhere;\n}\n.wbm-picker-actions {\n    flex: 0 0 auto;\n    display: flex;\n    flex-wrap: wrap;\n    gap: 8px;\n    padding: 8px 10px 4px;\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .3));\n}\n/* 底部动作按钮：直接照 ST 自己的 .menu_button 走（底色=主题模糊层、描边=主题描边、\n   按下用 brightness 提亮），这样换主题时和酒馆里其它按钮一起变，不会像外挂 */\n.wbm-picker-action {\n    flex: 1 1 0;\n    min-width: 0;\n    height: 40px;\n    border-radius: 10px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, .2));\n    color: var(--SmartThemeBodyColor, inherit);\n    font-family: inherit;\n    font-size: 14px;\n    cursor: pointer;\n    filter: grayscale(.5);\n    transition: filter .12s ease, background-color .12s ease;\n}\n.wbm-picker-action.primary {\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    filter: none;\n}\n/* 主按钮独占一行：三个按钮挤在一行时手机上文字必被压扁 */\n.wbm-picker-action.wide { flex: 1 1 100%; }\n.wbm-picker-action:active { filter: grayscale(.2) brightness(1.25); }\n.wbm-picker-action.primary:active { filter: brightness(1.25); }\n.wbm-picker-action:disabled { opacity: .45; filter: grayscale(1); cursor: default; }\n\n/* 多选用的方块勾（批量搬运条目时用） */\n.wbm-picker-box {\n    position: relative;\n    flex: 0 0 auto;\n    width: 20px;\n    height: 20px;\n    border-radius: 6px;\n    border: 2px solid var(--SmartThemeBorderColor, rgba(170, 170, 170, .9));\n    box-sizing: border-box;\n    transition: background-color .12s ease, border-color .12s ease;\n}\n.wbm-picker-row.active .wbm-picker-box {\n    border-color: var(--SmartThemeQuoteColor, #d4b06a);\n    background: var(--SmartThemeQuoteColor, #d4b06a);\n}\n.wbm-picker-row.active .wbm-picker-box::after {\n    content: '';\n    position: absolute;\n    left: 50%;\n    top: 50%;\n    width: 5px;\n    height: 9px;\n    border: solid var(--SmartThemeBlurTintColor, #1c1c26);\n    border-width: 0 2px 2px 0;\n    box-sizing: border-box;\n    transform: translate(-50%, -58%) rotate(42deg);\n}\n\n/* 批量移动/复制入口：条目列表上方的小按钮 */\n.wbm-batch-bar {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 8px;\n    justify-content: flex-end;\n    margin: 2px 0 6px;\n}\n/* 分组小框：和筛选条同形制（圆角、主题描边、极淡底色），标注在左 */\n.wbm-tool-group {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    padding: 6px 8px;\n    border-radius: 9px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);\n}\n/* 工具栏按键：底色/描边/文字全部交给酒馆的 .menu_button（那就跟着主题走），\n   这里只管圆角与内距，和筛选条的胶囊保持同一形制。 */\n.wbm-batch-btn {\n    flex: 0 0 auto;\n    width: auto;\n    margin: 0;\n    height: 26px;\n    padding: 5px 11px;\n    border-radius: 999px;\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1;\n    white-space: nowrap;\n    cursor: pointer;\n}\n.wbm-batch-btn:active { filter: brightness(1.3); }\n\n/* 删除按钮：危险动作单独一档颜色，按一下变「确认删除 N 条」再由主题强调色提醒 */\n.wbm-picker-action.danger {\n    border-color: var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    color: var(--SmartThemeEmColor, #d08a8a);\n    filter: none;\n}\n.wbm-picker-action.danger.armed {\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-weight: 600;\n}\n/* 历史记录里的「恢复」小按钮 */\n.wbm-hist-restore {\n    flex: 0 0 auto;\n    height: 28px;\n    padding: 0 12px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-family: inherit;\n    font-size: 12px;\n    cursor: pointer;\n}\n.wbm-hist-restore:active { background: rgba(128, 128, 128, .24); }\n\n/* 原书已经被删掉的删除记录：恢复不了，给一个安静的标记代替「恢复」按钮 */\n.wbm-hist-gone {\n    flex: 0 0 auto;\n    padding: 3px 9px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    font-size: 12px;\n    line-height: 1.4;\n    opacity: .6;\n    white-space: nowrap;\n}\n\n/* 批量替换窗口：替换词输入行 + 命中片段行 */\n.wbm-replace-row {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    padding: 2px 12px 8px;\n}\n.wbm-replace-label {\n    flex: 0 0 auto;\n    font-size: 12px;\n    opacity: .65;\n    white-space: nowrap;\n}\n.wbm-replace-field {\n    flex: 1 1 auto;\n    min-width: 0;\n    margin: 0 !important;\n    padding: 6px 9px;\n    font-size: 13px;\n    border-radius: 8px;\n}\n.wbm-replace-chips {\n    flex-wrap: wrap;\n    padding: 0 12px 6px;\n    justify-content: flex-start;\n}\n.wbm-replace-hit {\n    font-size: 12px;\n    line-height: 1.45;\n    opacity: .72;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n/* 操作历史的行：第一行是\"时间 动作 N 条：A → B\"，第二行是条目名 */\n.wbm-hist-row {\n    align-items: flex-start;\n    padding: 9px 12px;\n}\n.wbm-hist-col {\n    display: flex;\n    flex-direction: column;\n    gap: 2px;\n    flex: 1 1 auto;\n    min-width: 0;\n}\n.wbm-hist-line {\n    font-size: 14px;\n    line-height: 1.35;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n.wbm-hist-names {\n    font-size: 12px;\n    line-height: 1.3;\n    opacity: .62;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n/* 收藏筛选条：★ 收藏（只看收藏）与 收藏置顶 开关并排 */\n.wbm-favbar {\n    display: flex;\n    gap: 6px;\n    padding: 0 2px 2px;\n}\n/* 这两个键同时带 .menu_button：底色、描边、文字全交给酒馆自己的按钮样式，\n   主题里改 .menu_button 时它们跟着一起变（以前写死透明底 + opacity，换主题就显得像外挂）。 */\n.wbm-chip {\n    flex: 0 0 auto;\n    width: auto;\n    margin: 0;\n    height: 26px;\n    padding: 0 11px;\n    border-radius: 999px;\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1;\n    white-space: nowrap;\n    cursor: pointer;\n}\n.wbm-chip.on {\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-weight: 600;\n    /* 酒馆原生按钮自带 grayscale(.5)，选中态要让它退回去，否则主题强调色会被洗灰 */\n    filter: none;\n}\n\n/* ---------- 移动端键盘卡顿：压住酒馆自己的 resize hack ----------\n   酒馆在 browser-fixes.js:84 里每次 resize 把 <html> 设成 position:fixed 再还原\n   （本意是修 iOS 的定位错位），代价是每次键盘弹出/收起都强制两次整页重排。\n   Android 上这纯属开销，所以 JS 会给 <html> 加这个 class；iOS 不加。\n   !important 能压住酒馆写进去的 inline style，赋值照旧、重排不再发生。 */\nhtml.wbm-quiet-resize {\n    position: static !important;\n}\n\n/* ---------- 条目搜索范围：贴在搜索框右边、排序下拉左边 ---------- */\n/* 那一行是宿主的静态工具条（图标 + 搜索框 + 排序下拉）。我们把三枚小键插在\n   搜索框与排序下拉之间，并接管两者原来的 flex:1，让排序下拉被裁短、把宽度让给搜索框。 */\n.wbm-search-scope {\n    display: flex;\n    align-items: center;\n    flex-wrap: wrap;\n    gap: 4px;\n    flex: 0 1 auto;\n    min-width: 0;\n}\n.wbm-scope-label {\n    flex: 0 0 auto;\n    font-size: 11px;\n    line-height: 1.4;\n    opacity: .55;\n    white-space: nowrap;\n}\n.wbm-chip-sm {\n    height: 22px;\n    padding: 0 8px;\n    font-size: 11px;\n    border-radius: 999px;\n}\n.wbm-scope-row #world_info_search {\n    flex: 1 1 120px;\n    min-width: 5em;\n}\n/* 排序下拉：从\"和搜索框各占一半\"改成固定一块，宽到能读完 Priority / Title A-Z */\n.wbm-scope-row #world_info_sort_order {\n    flex: 0 0 auto;\n    width: 8.5em;\n    min-width: 0;\n    max-width: 8.5em;\n}\n/* 手机/平板判定：不再只看宽度。\n   只写 \"max-width:760px\" 时，手机一横过来（844×390）和 iPad 竖屏（768）都掉到桌面样式里，\n   所以判据换成三种任命中其一：窄屏 / 短边矮（横屏手机）/ 触屏（iPad 等，宽度封顶 1100，\n   免得把触屏一体机也算进来）。CSS 不能在媒体查询里引用变量，这条表达式在三处出现，改要一起改。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    /* 窄屏上标签让位给三个键本身（键名已经说明了用途）；\n       排序下拉不再挤在同一行尾巴上，改为独占下一行、占满宽度，读起来才像个控件行 */\n    .wbm-scope-row .wbm-scope-label { display: none; }\n    .wbm-scope-row #world_info_sort_order {\n        flex: 1 1 100%;\n        width: auto;\n        max-width: none;\n    }\n    .wbm-chip-sm { height: 20px; padding: 0 6px; font-size: 10px; }\n}\n/* 行里的收藏星标：只切收藏，不触发跳转 */\n.wbm-star {\n    flex: 0 0 auto;\n    width: 28px;\n    height: 28px;\n    padding: 0;\n    border: none;\n    border-radius: 8px;\n    background: transparent;\n    color: inherit;\n    font-size: 15px;\n    line-height: 1;\n    opacity: .45;\n    cursor: pointer;\n}\n.wbm-star.on {\n    opacity: 1;\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n}\n.wbm-star:active { background: rgba(128, 128, 128, .24); }\n\n/* 条目列表的「仅收藏 / 收藏置顶」小条：紧跟在条目列表上方的工具栏下面 */\n/* 筛选条：整个框按内容收窄、靠右对齐；「筛选」标注紧贴第一个键，不飘到最左边 */\n.wbm-entry-favbar {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    justify-content: flex-start;\n    width: fit-content;\n    max-width: 100%;\n    margin: 0 0 6px auto;\n    padding: 6px 8px;\n    border-radius: 9px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);\n}\n/* 标注：字号跟着主题字号走，颜色取主题正文色，只在右侧拉一道分隔线 */\n.wbm-favbar-label {\n    flex: 0 0 auto;\n    padding-right: 8px;\n    margin-right: 2px;\n    border-right: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    color: var(--SmartThemeBodyColor, inherit);\n    font-size: 13px;\n    font-weight: 600;\n    line-height: 1.2;\n    opacity: .9;\n    white-space: nowrap;\n}\n/* 收藏筛选：用 class 隐藏，不动 inline display，免得和酒馆自己的搜索过滤打架 */\n#world_popup_entries_list .wbm-fav-hidden { display: none !important; }\n/* 置顶：只借 flex order 排视觉顺序，DOM 顺序保持原生（拖拽/分页/搜索都不受影响） */\n#world_popup_entries_list.wbm-order-on {\n    display: flex;\n    flex-direction: column;\n}\n\n/* 五个操作收在一个容器里：桌面排一行（收藏、预览、移动/复制、删除），手机排三行 */\n.wbm-entry-actions {\n    display: flex;\n    align-items: center;\n    gap: 2px;\n    flex: 0 0 auto;\n}\n@media (max-width: 1000px) {\n    .wbm-entry-actions {\n        display: flex;\n        flex-wrap: nowrap;\n        gap: 6px;\n        align-items: center;\n        justify-content: flex-end;\n        margin-left: auto;\n    }\n    /* 手机上按钮放大到手指好按：五个键等宽等高，排成一行 */\n    .wbm-entry-actions > * {\n        flex: 0 0 auto;\n        min-width: 38px;\n        height: 34px;\n        display: inline-flex;\n        align-items: center;\n        justify-content: center;\n        padding: 0 !important;\n        margin: 0 !important;\n        font-size: 16px;\n        line-height: 1;\n    }\n}\n.wbm-fav-entry-btn,\n.wbm-preview-btn {\n    flex: 0 0 auto;\n    cursor: pointer;\n    font-style: normal;\n    line-height: 1;\n    padding: 2px 7px !important;\n    font-size: 13px;\n    margin: 0 !important;\n}\n.wbm-fav-entry-btn { opacity: .55; }\n.wbm-fav-entry-btn.on {\n    opacity: 1;\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    /* 酒馆原生按钮带 grayscale(.5)，收藏态要露出主题强调色就得把它撤掉 */\n    filter: none;\n}\n\n/* 只读预览浮层 */\n.wbm-prev-title {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 15px;\n    font-weight: 600;\n}\n.wbm-prev-body {\n    flex: 1 1 auto;\n    min-height: 0;\n    overflow-y: auto;\n    overscroll-behavior: contain;\n    padding: 4px 14px 14px;\n    -webkit-user-select: text;\n    user-select: text;\n}\n.wbm-prev-meta {\n    font-size: 12px;\n    opacity: .6;\n    margin-bottom: 8px;\n    overflow-wrap: anywhere;\n}\n.wbm-prev-keys {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 6px;\n    margin-bottom: 10px;\n}\n.wbm-prev-key {\n    padding: 2px 9px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .16);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 10%, transparent);\n    font-size: 12px;\n    line-height: 1.6;\n}\n/* 预览里的关键词分区：主要关键词 / 逻辑 / 可选过滤器，各自一行、标签在前 */\n.wbm-prev-kwlines {\n    margin-bottom: 4px;\n}\n.wbm-prev-kwline {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    margin-bottom: 8px;\n}\n.wbm-prev-kwlabel {\n    font-size: 12px;\n    font-weight: 600;\n    opacity: .65;\n    margin-right: 2px;\n    white-space: nowrap;\n}\n.wbm-prev-kwempty {\n    font-size: 12px;\n    opacity: .45;\n}\n.wbm-prev-kwvalue {\n    font-size: 12px;\n    opacity: .8;\n    overflow-wrap: anywhere;\n}\n.wbm-prev-text {\n    font-size: 14px;\n    line-height: 1.7;\n    white-space: pre-wrap;\n    overflow-wrap: anywhere;\n}\n\n\n/* ---------- 窄屏重排：标题行（标题＋触发策略）→ 字段网格 → 功能键 ---------- */\n@media (max-width: 1000px) {\n    /* 条目之间拉开距离并加分隔线，否则上下两条黏在一起分不清 */\n    #world_popup_entries_list .world_entry + .world_entry {\n        margin-top: 14px;\n        padding-top: 12px;\n        border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));\n    }\n    /* 折叠箭头、开关、拖动把手始终在条目头的同一条中线上：这里绝不能再改成 flex-start，\n       否则箭头和开关会飘到左上角，跟中间的 ☰ 错开（v2.4.0 的失误） */\n    #world_popup_entries_list .world_entry_thin_controls {\n        align-items: center;\n    }\n\n    /* 标题行：标题吃满剩下的宽度；触发策略（🔵/🟢/🔗）留在标题右边，\n       不再像之前那样被搬进字段网格、撑成一整条拉到满宽 */\n    #world_popup_entries_list .WIEntryTitleAndStatus {\n        flex: 1 1 100%;\n        width: 100%;\n        min-width: 0;\n        gap: 6px;\n    }\n    #world_popup_entries_list .WIEntryTitleAndStatus > .flex-container {\n        flex: 1 1 auto;\n        width: auto;\n        min-width: 0;\n    }\n    #world_popup_entries_list .WIEntryTitleAndStatus textarea[name=\"comment\"] {\n        width: 100% !important;\n    }\n    #world_popup_entries_list .WIEntryTitleAndStatus select[name=\"entryStateSelector\"] {\n        flex: 0 0 auto;\n        align-self: center;\n        width: auto !important;\n        min-width: 40px;\n        height: 32px;\n    }\n\n    /* 字段：标签小一号、控件撑满格子，四列宽度一致 */\n    #world_popup_entries_list .WIEnteryHeaderControls {\n        flex: 1 1 100%;\n        width: 100%;\n        display: grid;\n        grid-template-columns: repeat(2, minmax(0, 1fr));\n        gap: 8px 10px;\n        align-items: end;\n    }\n    #world_popup_entries_list .WIEnteryHeaderControls > * {\n        min-width: 0;\n    }\n    #world_popup_entries_list .WIEnteryHeaderControls .WIEntryHeaderTitleMobile {\n        display: block;\n        font-size: 12px;\n        line-height: 1.3;\n        opacity: .7;\n        margin: 0 0 2px;\n    }\n    #world_popup_entries_list .WIEnteryHeaderControls select,\n    #world_popup_entries_list .WIEnteryHeaderControls input {\n        width: 100% !important;\n        max-width: none !important;\n    }\n}\n\n/* 空间不够把五个键塞在标题行右边时（竖屏手机、横屏手机、平板）：整排锁在条目右下角，\n   标题与字段因此能用满整行。命中条件同上（窄屏 / 短边矮 / 触屏）。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    #world_popup_entries_list .world_entry .inline-drawer-header {\n        position: relative;\n        padding-bottom: 42px;\n    }\n    #world_popup_entries_list .wbm-entry-actions {\n        position: absolute;\n        right: 0;\n        bottom: 0;\n        margin: 0;\n    }\n}\n\n/* 横屏手机 / 平板：空间够了，字段排三列 */\n@media (min-width: 641px) and (max-width: 1000px) {\n    #world_popup_entries_list .WIEnteryHeaderControls {\n        grid-template-columns: repeat(3, minmax(0, 1fr));\n    }\n}\n\n/* 再宽一些、而且不是触屏（鼠标操作的窄窗）：五个键回到标题行右侧、跟标题对齐靠上。\n   触屏和平板一律留在右下角，那里最好按。 */\n@media (min-width: 761px) and (max-width: 1000px) and (pointer: fine) {\n    #world_popup_entries_list .wbm-entry-actions {\n        align-self: flex-start;\n        margin-top: 2px;\n    }\n}\n\n@keyframes wbm-mask-in { from { opacity: 0; } to { opacity: 1; } }\n@keyframes wbm-mask-out { from { opacity: 1; } to { opacity: 0; } }\n@keyframes wbm-sheet-in { from { transform: translateY(14px); opacity: .6; } to { transform: none; opacity: 1; } }\n@keyframes wbm-sheet-out { from { transform: none; opacity: 1; } to { transform: translateY(14px); opacity: 0; } }\n\n/* 操作历史顶部的容量提示：与上面「最近 N 条操作…」同一条左边线（标题内边距左 12px） */\n.wbm-hist-usage {\n    opacity: .5;\n    font-size: 11px;\n    padding: 0 12px;\n    margin: -2px 0 6px;\n}\n\n/* 危险操作提示条（递归开关等） */\n.wbm-warn-row {\n    margin: 0 0 8px;\n    padding: 8px 10px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .12);\n    background: color-mix(in srgb, var(--SmartThemeEmColor, #e1ecaa) 14%, transparent);\n    font-size: 12px;\n    line-height: 1.55;\n}\n\n/* 体检窗口：可展开的分类、条目行、正文摘录 */\n.wbm-health-cat {\n    display: flex;\n    flex-direction: column;\n    margin-bottom: 6px;\n}\n.wbm-health-head {\n    width: 100%;\n    text-align: left;\n    padding: 8px 10px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .10);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 7%, transparent);\n    color: inherit;\n    font-family: inherit;\n    font-size: 13px;\n    line-height: 1.4;\n    cursor: pointer;\n}\n.wbm-health-head::before { content: '▸ '; opacity: .7; }\n.wbm-health-head.open::before { content: '▾ '; }\n.wbm-health-list {\n    display: flex;\n    flex-direction: column;\n    gap: 2px;\n    padding: 4px 0 6px 10px;\n}\n.wbm-health-linewrap { display: flex; flex-direction: column; }\n.wbm-health-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; }\n.wbm-health-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    text-align: left;\n    padding: 4px 6px;\n    border: none;\n    border-radius: 6px;\n    background: transparent;\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1.4;\n    cursor: pointer;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n.wbm-health-act {\n    flex: 0 0 auto;\n    padding: 3px 8px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: inherit;\n    font-family: inherit;\n    font-size: 11px;\n    line-height: 1.4;\n    opacity: .8;\n    cursor: pointer;\n}\n.wbm-health-excerpt { padding: 2px 6px 8px; }\n.wbm-health-body {\n    font-size: 12px;\n    line-height: 1.55;\n    white-space: pre-wrap;\n    opacity: .82;\n    max-height: 160px;\n    overflow-y: auto;\n}\n\n/* 体检：ⓘ 说明折叠 */\n.wbm-health-info {\n    align-self: flex-start;\n    margin: 0 0 6px;\n    padding: 5px 10px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1.4;\n    opacity: .8;\n    cursor: pointer;\n}\n.wbm-health-info.open { opacity: 1; }\n.wbm-health-info-body {\n    margin: 0 0 8px;\n    padding: 8px 10px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));\n    background: rgba(128, 128, 128, .08);\n    font-size: 12px;\n    line-height: 1.55;\n}\n.wbm-health-info-line { opacity: .85; }\n\n/* ---- 正文防误触：默认只读，双击进编辑，标题旁出「取消 / 保存」 ---- */\n.wbm-edit-actions {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    margin-left: 8px;\n    vertical-align: middle;\n}\n.wbm-edit-actions[hidden] { display: none !important; }\n.wbm-edit-btn {\n    font: inherit;\n    font-size: 12px;\n    line-height: 1;\n    padding: 4px 11px;\n    border-radius: 999px;\n    cursor: pointer;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .28));\n    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202020) 88%, transparent);\n    color: var(--SmartThemeBodyColor, #ddd);\n    transition: filter .12s ease, background .12s ease;\n}\n.wbm-edit-btn:hover { filter: brightness(1.18); }\n.wbm-edit-btn:active { filter: brightness(.92); }\n.wbm-edit-cancel { opacity: .85; }\n/* 确认键跟随酒馆主题：底色/描边取主题强调色（--SmartThemeQuoteColor），文字取正文色 */\n.wbm-edit-save {\n    font-weight: 700;\n    border-color: var(--SmartThemeQuoteColor, rgba(140, 190, 255, .85));\n    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8cbeff) 22%, transparent);\n    color: var(--SmartThemeBodyColor, #eee);\n}\n.wbm-edit-save:hover {\n    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8cbeff) 38%, transparent);\n    filter: none;\n}\n/* 字段级「取消 / 保存」：贴着被解锁的那个字段放 */\n.wbm-field-bar {\n    display: inline-flex;\n    align-items: center;\n    gap: 4px;\n    margin-left: 6px;\n    vertical-align: middle;\n}\n.wbm-field-bar[hidden] { display: none !important; }\n/* 正在编辑的那个字段加一圈强调色，别让人找不到 */\n.wbm-field-editing {\n    outline: 1px solid var(--SmartThemeQuoteColor, rgba(140, 190, 255, .8));\n    outline-offset: 1px;\n}\ntextarea.wbm-content-locked { cursor: pointer; }\ntextarea.wbm-content-editing {\n    outline: 1px solid var(--SmartThemeQuoteColor, rgba(120, 190, 255, .8));\n    outline-offset: 1px;\n}\n\n/* ---- 条目防误触锁：下拉/复选/关键词点不动，双击条目进编辑态 ---- */\n.wbm-inert {\n    pointer-events: none !important;\n}\n/* 被 select2 包一层的下拉（关键词、触发策略等）：锁住时连它那一层也点不动 */\n.world_entry[data-wbm-locked=\"1\"] .select2-container,\n.world_entry[data-wbm-locked=\"1\"] .select2-selection {\n    pointer-events: none !important;\n}\n.wbm-field-locked {\n    cursor: pointer;\n}\n/* 编辑态的条目：整块加一圈淡淡的强调色，让人一眼知道\"现在这条可以改\" */\n.world_entry[data-wbm-editing=\"1\"] {\n    outline: 1px solid var(--SmartThemeQuoteColor, rgba(120, 190, 255, .55));\n    outline-offset: -1px;\n}\n.wbm-edit-bar {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    margin-right: 6px;\n}\n.wbm-edit-bar[hidden] { display: none !important; }\n/* 顶栏上的开关图标 */\n#wbm-lock-toggle {\n    cursor: pointer;\n}\n#wbm-lock-toggle.wbm-lock-on {\n    color: var(--SmartThemeQuoteColor, #7cc0ff);\n}\n\n/* ================= 消息编辑：右下角再挂一排原生按钮 ================= */\n\n/* 顶部那排（.mes_edit_buttons）原样保留，不动它。这里说的是编辑期间由 index.js\n   克隆到消息右下角的第二排（#wbm-bottom-editrow）：长消息点完铅笔不用再往上翻。\n   克隆体用的还是酒馆原生的类名（.mes_edit_done 等），所以配色、点击行为全部照旧，\n   下面只是把它摆到 .mes 的右下角，并按宿主原排的尺寸把外面那层容器量出来。 */\n#wbm-bottom-editrow {\n    position: absolute;\n    right: 8px;\n    bottom: 6px;\n    left: auto;\n    top: auto;\n    display: inline-flex;\n    flex-direction: row;\n    align-items: center;\n    gap: 5px;\n    padding: 0;\n    margin: 0;\n    z-index: 50;\n}\n\n/* 尺寸与透明度对齐宿主原生那排（.mes_edit_buttons .menu_button 的同一套数值），\n   落在容器外时宿主的规则选不到，这里补一份，避免克隆出来的按钮比上面那排更大更亮 */\n#wbm-bottom-editrow .menu_button {\n    opacity: 0.5;\n    padding: 0;\n    margin: 0;\n    font-size: 1rem;\n    height: 2rem;\n    aspect-ratio: 1 / 1;\n    display: flex;\n    justify-content: center;\n    align-items: center;\n    cursor: pointer;\n}\n\n#wbm-bottom-editrow .menu_button:hover {\n    opacity: 1;\n}\n\n/* 把正在编辑的正文顶起来，给下面那排按钮腾出位置：最后一行不会被按钮压住。\n   条件写成「这条消息里确实有那排克隆按钮」——关掉开关或总开关后按钮不生成，\n   这里也就不会白白多出一段空白。 */\n.mes:has(> #wbm-bottom-editrow) > .mes_block > .mes_text {\n    padding-bottom: calc(2rem + 14px);\n}\n\n/* 编辑期间让开这条消息的左右滑档箭头与滑档计数：它们也钉在消息右下角，\n   z-index(9999) 比按钮高，留着的下场是挡住最右边的取消键。只在有那排按钮时生效。 */\n.mes:has(> #wbm-bottom-editrow) > .swipeRightBlock,\n.mes:has(> #wbm-bottom-editrow) > .swipe_left,\n.mes:has(> #wbm-bottom-editrow) > .swipe_right {\n    display: none !important;\n}\n\n/* 页码被我们接管后钉在气泡正中下方（不再是 .swipeRightBlock 的孩子），上面那条选不到它，\n   它会和右下角那排按钮同一水平线、手机上图标直接叠在一起。编辑期间这条消息的页码一并让位；\n   .wbm-editing 是老 WebView 不认 :has() 时的兜底（由 main.js 的 syncBottomRow 加/删）。 */\n.mes:has(> #wbm-bottom-editrow) > .swipes-counter,\n.mes:has(> #wbm-bottom-editrow) .swipes-counter,\n.mes.wbm-editing .swipes-counter {\n    display: none !important;\n}\n\n/* ================= 扩展设置抽屉 ================= */\n\n/* 分组小标题：用主题引色，换主题时跟着变 */\n#wbm-settings .wbm-opt-group {\n    margin: 16px 0 8px;\n    padding-top: 10px;\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .15));\n}\n\n#wbm-settings .wbm-opt-group > b {\n    color: var(--SmartThemeQuoteColor, inherit);\n    font-size: .95em;\n    letter-spacing: .3px;\n}\n\n/* 每个开关做成一张小卡片：左边一条主题色强调线 + 很淡的主题底色 + 卡与卡之间留白。\n   换主题时强调线与底色都跟着变（color-mix 前面垫 rgba 兜底，老浏览器也有底线）。 */\n#wbm-settings .wbm-opt-label {\n    display: flex;\n    align-items: flex-start;\n    gap: 8px;\n    margin: 0 0 10px;\n    padding: 8px 10px 9px;\n    border-left: 3px solid var(--SmartThemeQuoteColor, rgba(128, 128, 128, .6));\n    border-radius: 6px;\n    /* 底色取自正文色：深色主题是提亮、浅色主题是压暗，两边都看得出\"这是一张卡\"。\n       先写 rgba 兜底，再用 color-mix 跟主题走。 */\n    background: rgba(255, 255, 255, .05);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, rgba(255, 255, 255, .9)) 9%, transparent);\n}\n\n#wbm-settings .wbm-opt-label:hover {\n    background: rgba(255, 255, 255, .09);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, rgba(255, 255, 255, .9)) 15%, transparent);\n}\n\n/* 说明文字：放进开关的 label 里、和标题同一列，这样无论主题把复选框画多大，\n   说明都从标题的左边开始，不会吊在复选框底下 */\n#wbm-settings .wbm-opt-text {\n    display: flex;\n    flex-direction: column;\n    gap: 4px;\n    min-width: 0;\n}\n\n#wbm-settings .wbm-opt-title {\n    line-height: 1.4;\n}\n\n#wbm-settings .wbm-opt-note {\n    font-size: .85em;\n    line-height: 1.5;\n    opacity: .8;\n}\n\n/* 总开关关着时，下面几项就地变淡，提示\"现在没在生效\"，但仍然可以预先设置 */\n#wbm-settings .inline-drawer-content[data-wbm-idle=\"1\"] .wbm-opt-group,\n#wbm-settings .inline-drawer-content[data-wbm-idle=\"1\"] .wbm-opt-label {\n    opacity: .55;\n}\n\n#wbm-settings .inline-drawer-content[data-wbm-idle=\"1\"] #wbm-opt-enhance {\n    opacity: 1;\n}\n\n/* ================= 手机端：把世界书面板那几排控件压紧 ================= */\n\n/* 目标：不缩小按键（手指要能点中），只把\"折行\"消掉。\n   具体是——搜索区压成两排、世界书选择那排拆成\"选书 / 动书\"两排、\n   批量整理与筛选条各自横向滚动，不再折成三四行。\n   命中条件与上面两处相同：窄屏 / 短边矮（横屏手机）/ 触屏平板。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    /* 搜索行：按实际宽度自然换行（不强行单行，否则尾部控件会被挤出屏幕外够不到）：\n       搜索框自己占一行，三枚范围键 + 排序挤在下一行，仍然是两行。 */\n    .wbm-scope-row {\n        flex-wrap: wrap;\n        align-items: center;\n        gap: 5px;\n    }\n    .wbm-scope-row .wbm-search-scope {\n        flex-wrap: nowrap;\n        flex: 0 1 auto;\n    }\n    .wbm-scope-row #world_info_search {\n        flex: 1 1 100%;\n        min-width: 4.5em;\n        order: 1;\n    }\n    .wbm-scope-row .wbm-search-scope { order: 2; }\n    .wbm-scope-row #world_info_sort_order {\n        flex: 1 1 auto;\n        width: auto;\n        max-width: none;\n        min-width: 5.5em;\n        order: 3;\n    }\n    /* 范围键放大到手指能点中（原来 20px 太矮），但仍排在同一行 */\n    .wbm-scope-row .wbm-chip-sm {\n        height: 28px;\n        padding: 0 8px;\n        font-size: 12px;\n    }\n\n    /* ---------- 世界书选择那一排：拆成两排 ---------- */\n    /* 第一排（挑一本书）：创建 · or · 选择以编辑 · 世界书分类\n       第二排（动这本书）：导入 · 导出 · 重命名 · 复制 · 删除 —— 五等分占满 */\n    .wbm-world-row {\n        flex-wrap: wrap;\n        align-items: center;\n        gap: 6px;\n    }\n    .wbm-world-row .wbm-rowbreak {\n        display: block;\n        flex: 0 0 100%;\n        width: 100%;\n        height: 0;\n        margin: 0;\n        padding: 0;\n        border: 0;\n    }\n    .wbm-world-row #world_create_button,\n    .wbm-world-row > small {\n        flex: 0 0 auto;\n    }\n    .wbm-world-row #world_create_button { height: 34px; }\n    /* 书名再长也不许把右边那枚分类图标挤走：\n       basis 取 0（不是 auto）——auto 会先按内容宽度撑开，长书名就把兄弟挤出行外；\n       min-width 归零 + overflow 兜底，按钮内部自己省略号截断。 */\n    .wbm-world-row .wbm-editor-wrap {\n        flex: 1 1 0;\n        min-width: 0;\n        max-width: 100%;\n        overflow: hidden;\n    }\n    .wbm-world-row .wbm-editor-btn {\n        display: block;\n        width: 100%;\n        min-width: 0;\n        max-width: 100%;\n        box-sizing: border-box;\n        white-space: nowrap;\n        overflow: hidden;\n        text-overflow: ellipsis;\n    }\n    .wbm-world-row .wbm-cat-btn {\n        flex: 0 0 34px;\n        width: 34px;\n        height: 34px;\n    }\n    .wbm-world-row #world_import_button,\n    .wbm-world-row #world_popup_export,\n    .wbm-world-row #world_popup_name_button,\n    .wbm-world-row #world_duplicate,\n    .wbm-world-row #world_popup_delete {\n        flex: 1 1 0;\n        min-width: 34px;\n        max-width: none;\n        height: 34px;\n        margin: 0 !important;\n        padding: 0;\n        display: inline-flex;\n        align-items: center;\n        justify-content: center;\n        font-size: 15px;\n        line-height: 1;\n    }\n\n    /* ---------- 横滑条：留一条 3px 细滚动条，滑得动看得出来 ---------- */\n    /* 批量整理 / 检查记录：一行，横向滚动，不再折行 */\n    .wbm-batch-bar {\n        flex-wrap: nowrap;\n        justify-content: flex-start;\n        overflow-x: auto;\n        overflow-y: hidden;\n        padding-bottom: 5px;\n        scrollbar-width: thin;\n        scrollbar-color: var(--SmartThemeQuoteColor, rgba(170, 170, 170, .6)) transparent;\n        /* 滚到边上别把整页带着动 */\n        overscroll-behavior-x: contain;\n    }\n    .wbm-batch-bar .wbm-tool-group {\n        flex: 0 0 auto;\n        flex-wrap: nowrap;\n    }\n\n    /* 条目筛选条同理：一行横向滚动 */\n    .wbm-entry-favbar {\n        flex-wrap: nowrap;\n        overflow-x: auto;\n        overflow-y: hidden;\n        padding-bottom: 5px;\n        scrollbar-width: thin;\n        scrollbar-color: var(--SmartThemeQuoteColor, rgba(170, 170, 170, .6)) transparent;\n        overscroll-behavior-x: contain;\n    }\n    .wbm-entry-favbar .wbm-chip,\n    .wbm-entry-favbar .menu_button {\n        flex: 0 0 auto;\n    }\n\n    /* 已启用列表头顶的 ★收藏 / 收藏置顶 同理 */\n    .wbm-favbar {\n        flex-wrap: nowrap;\n        overflow-x: auto;\n        overflow-y: hidden;\n        padding-bottom: 3px;\n        scrollbar-width: thin;\n        scrollbar-color: var(--SmartThemeQuoteColor, rgba(170, 170, 170, .6)) transparent;\n        overscroll-behavior-x: contain;\n    }\n\n    /* WebKit 的细滚动条（上面 scrollbar-width 对 Chrome 已生效，这里统一大小与取色） */\n    .wbm-batch-bar::-webkit-scrollbar,\n    .wbm-entry-favbar::-webkit-scrollbar,\n    .wbm-favbar::-webkit-scrollbar {\n        height: 3px;\n        background: transparent;\n    }\n    .wbm-batch-bar::-webkit-scrollbar-track,\n    .wbm-entry-favbar::-webkit-scrollbar-track,\n    .wbm-favbar::-webkit-scrollbar-track { background: transparent; }\n    .wbm-batch-bar::-webkit-scrollbar-thumb,\n    .wbm-entry-favbar::-webkit-scrollbar-thumb,\n    .wbm-favbar::-webkit-scrollbar-thumb {\n        border-radius: 2px;\n        background: var(--SmartThemeQuoteColor, rgba(170, 170, 170, .6));\n    }\n\n    /* 按键别缩得太小：手机上一律不低于 30px 高 */\n    #wbm-list .wbm-chip,\n    .wbm-entry-favbar .wbm-chip {\n        height: 30px;\n        font-size: 12px;\n        padding: 0 11px;\n    }\n\n    /* 「选择以编辑」按钮允许被压缩，避免把宿主那排图标挤到下一行 */\n    .wbm-editor-wrap { min-width: 0; }\n    .wbm-editor-btn { min-width: 0; }\n\n}\n\n/* 够宽（600px 以上：横屏手机、平板、电脑）：搜索区挤回一行，把高度还给条目列表。\n   手机竖屏（390 那档）不命中，那边仍然是\"搜索框独占一排 + 键与排序一排\"。 */\n@media (min-width: 600px) {\n    .wbm-scope-row { flex-wrap: nowrap; }\n    .wbm-scope-row #world_info_search {\n        flex: 1 1 6em;\n        min-width: 4em;\n    }\n    .wbm-scope-row .wbm-search-scope {\n        flex: 0 0 auto;\n        flex-wrap: nowrap;\n    }\n    .wbm-scope-row #world_info_sort_order {\n        flex: 0 0 auto;\n        width: 8.5em;\n        max-width: 8.5em;\n        min-width: 0;\n    }\n}\n\n/* ================= 备选回复页码接管 =================\n    目标：页码固定在消息气泡下方正中，手机上也要点得中。\n    原则：只动 .swipes-counter 这一个盒子，.swipe_right / .swipe_left 一根手指都不碰——\n    所以把箭头换成小兔子之类的美化照旧生效；地方不够时宁可让箭头压住页码，\n    也绝不把箭头挤开（master 2026-10-20 定的）。\n    2026-10-20 master 复测：左边/下面两档显示都错位，砍掉，只保留中间。 */\n\nbody.wbm-swipe-on #chat .mes .swipes-counter {\n    font-size: 14px !important;\n    line-height: 1.3 !important;\n    min-width: 46px !important;\n    height: auto !important;\n    padding: 3px 10px !important;\n    margin: 0 !important;\n    border-radius: 999px;\n    opacity: .55 !important;\n    pointer-events: auto !important;\n    transition: opacity .15s ease, background-color .15s ease;\n}\n\nbody.wbm-swipe-on #chat .mes .swipes-counter:hover,\nbody.wbm-swipe-on #chat .mes .swipes-counter:focus-visible {\n    opacity: .95 !important;\n    background-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 12%, transparent) !important;\n}\n\n/* 页码搬进 .mes 绝对居中，消息底部补一条等高空行（学双色盒子的做法） */\nbody.wbm-swipe-on #chat .mes {\n    position: relative;\n    padding-bottom: 26px !important;\n}\n\nbody.wbm-swipe-on #chat .mes .swipes-counter {\n    position: absolute !important;\n    left: 50% !important;\n    right: auto !important;\n    top: auto !important;\n    bottom: 3px !important;\n    transform: translateX(-50%) !important;\n    align-self: auto !important;\n    order: 0 !important;\n}\n\n/* 手机：字再大一号、点击区撑到 44pt 上下，但视觉上仍然只是一个数字 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    body.wbm-swipe-on #chat .mes .swipes-counter {\n        font-size: 15px !important;\n        min-width: 60px !important;\n        padding: 7px 14px !important;\n        bottom: 4px !important;\n    }\n\n    body.wbm-swipe-on #chat .mes {\n        padding-bottom: 36px !important;\n    }\n}\n\n/* 备选回复弹窗标题栏里的「批量删除」（三栏网格：标题左 / 按钮中 / 关闭右上）\n   以前用绝对定位居中，按钮比标题栏高，下沿压在了弹窗的分隔线上（master 2026-10-20 报的）。 */\n.wbm-swipe-header {\n    display: grid !important;\n    grid-template-columns: 1fr auto 1fr;\n    align-items: center;\n    column-gap: 8px;\n    padding: 6px 0 10px !important;\n    min-height: 44px;\n    row-gap: 0;\n}\n\n.wbm-swipe-header > h3,\n.wbm-swipe-header > .swipe_picker_title {\n    grid-column: 1;\n    justify-self: start;\n    margin: 0 !important;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-swipe-header .wbm-swipe-bulk {\n    grid-column: 2;\n    justify-self: center;\n}\n\n.wbm-swipe-header .wbm-swipe-right {\n    grid-column: 3;\n    justify-self: end;\n    display: inline-flex;\n    align-items: center;\n    gap: 10px;\n    min-width: 0;\n}\n\n.wbm-swipe-header .wbm-swipe-right .popup-button-close {\n    margin-left: 0 !important;\n}\n\n.wbm-swipe-header .wbm-swipe-tool {\n    cursor: pointer;\n    user-select: none;\n    padding: 2px 4px;\n    border-radius: 4px;\n    transition: background-color .12s ease, opacity .12s ease;\n}\n\n.wbm-swipe-header .wbm-swipe-tools {\n    display: inline-flex;\n    align-items: center;\n    gap: 12px;\n    flex: 0 0 auto;\n    white-space: nowrap;\n}\n\n.wbm-swipe-header .wbm-swipe-tool {\n    flex: 0 0 auto;\n    white-space: nowrap;\n}\n\n@media (max-width: 480px) {\n    .wbm-swipe-header .wbm-swipe-tools { gap: 10px; }\n    .wbm-swipe-header .wbm-swipe-right { gap: 8px; }\n}\n\n.wbm-swipe-header .wbm-swipe-tool:hover {\n    opacity: 1;\n    background-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 14%, transparent);\n}\n\n.wbm-swipe-bulk {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    flex: 0 0 auto;\n    padding: 5px 12px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .18));\n    border-radius: 8px;\n    font-size: 13px;\n    line-height: 1.2;\n    opacity: .8;\n    cursor: pointer;\n    user-select: none;\n    white-space: nowrap;\n    transition: opacity .15s ease, border-color .15s ease, background-color .15s ease;\n}\n\n.wbm-swipe-bulk:hover {\n    opacity: 1;\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n}\n\n.wbm-swipe-bulk.armed {\n    opacity: 1;\n    border-color: var(--SmartThemeEmColor, #d6747b);\n    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #d6747b) 14%, transparent);\n}\n\n.wbm-swipe-bulk.wbm-busy {\n    opacity: .6;\n    pointer-events: none;\n}\n\n/* 选择模式：每条备选左侧一个勾选圈，点条目本身＝勾选，不再切换正文 */\n.wbm-swipe-pick {\n    flex: 0 0 auto;\n    align-self: center;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 22px;\n    height: 22px;\n    margin-right: 6px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .35));\n    border-radius: 50%;\n    opacity: .7;\n    transition: opacity .12s ease, background-color .12s ease, border-color .12s ease;\n}\n\n.wbm-swipe-pick i {\n    font-size: 11px;\n    opacity: 0;\n    transition: opacity .12s ease;\n}\n\n.wbm-swipe-pick.checked {\n    opacity: 1;\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 26%, transparent);\n}\n\n.wbm-swipe-pick.checked i {\n    opacity: 1;\n}\n\n.swipe_picker_block.wbm-select-on {\n    cursor: pointer;\n}\n\n.swipe_picker_block.wbm-picked {\n    box-shadow: inset 3px 0 0 var(--SmartThemeEmColor, #9c7bd6);\n}\n\n/* 页码轻触反馈：点到了就能看出来，不用等弹窗 */\n.swipes-counter.wbm-tap-flash {\n    opacity: 1 !important;\n    background-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 22%, transparent) !important;\n}\n\n/* 分类面板：勾选框外面那层，44px 命中区（手机点得中） */\n.wbm-cat-pick {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 44px;\n    height: 44px;\n    margin: -10px -8px -10px 0;\n    cursor: pointer;\n}\n";
+const WBM_CSS = "/* 世界书增强 · 样式 v1.2.0\n   全部限定在 #WIMultiSelector / #wbm-list 之内，不碰全局，避免与鸡尾酒等扩展互相覆盖。\n   原生控件只在 [data-wbm-ready=\"1\"]（自绘列表已成功挂载）时才隐藏，\n   扩展加载失败或上游改版时属性不会写，ST 原生下拉自动保留。 */\n\n#WIMultiSelector[data-wbm-ready=\"1\"] > .range-block-range > select#world_info,\n#WIMultiSelector[data-wbm-ready=\"1\"] .range-block-range > .select2-container {\n    display: none !important;\n}\n\n#wbm-list,\n#wbm-list * { box-sizing: border-box; }\n\n/* ST 原本给 .range-block-range 的是 flex:5（= basis 0%）。这个值有两个坑：\n   ① 加 min-width:0 会让 Chrome 把它算成 0 宽（内容全被挤成一字一行）；\n   ② 保持 min-width:auto 时，长书名的 min-content 会把它撑得比容器还宽，\n      列表溢出到右栏下面、「收起添加」按钮点不到。\n   改成 basis 100% 后宽度严格等于容器宽，两条坑一起没了。 */\n#WIMultiSelector[data-wbm-ready=\"1\"] > .range-block-range {\n    flex: 0 0 100%;\n    min-width: 0;\n}\n\n/* flex 子项默认 min-width:auto，不接受小于内容宽度。世界书名字是 nowrap，\n   长名会把整条链路顶宽、把「收起添加」按钮推出屏幕。整条链都放开 0。\n   注意：不要给 `#WIMultiSelector > .range-block-range` 加 min-width:0 就完事——\n   见上面的注释，光加 min-width:0 会让它塌成 0 宽。 */\n#WIMultiSelector[data-wbm-ready=\"1\"],\n#wbm-list,\n#wbm-list .wbm-header,\n#wbm-list .wbm-actives,\n#wbm-list .wbm-addpanel,\n#wbm-list .wbm-addlist,\n#wbm-list .wbm-row,\n#wbm-list .wbm-addrow {\n    min-width: 0;\n    max-width: 100%;\n}\n\n#wbm-list {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    margin-top: 6px;\n    width: 100%;\n}\n\n/* ---------- 头部 ---------- */\n#wbm-list .wbm-header {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    justify-content: space-between;\n    gap: 6px;\n    min-width: 0;\n}\n#wbm-list .wbm-title {\n    flex: 1 1 auto;\n    min-width: 0;\n    font-size: 12px;\n    opacity: .8;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n#wbm-list .wbm-add {\n    flex: 0 0 auto;\n    padding: 3px 9px;\n    font-size: 11.5px;\n    line-height: 1.3;\n    white-space: nowrap;\n    border: 1px solid var(--SmartThemeBorderColor, #666);\n    background: transparent;\n    color: inherit;\n    border-radius: 999px;\n    cursor: pointer;\n}\n\n/* ---------- 搜索框 ---------- */\n#wbm-list .wbm-search {\n    width: 100%;\n    padding: 6px 10px;\n    font-size: 13px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .15));\n    background: var(--black30a, rgba(0, 0, 0, .2));\n    color: inherit;\n    outline: none;\n}\n\n/* ---------- 提示 ---------- */\n#wbm-list .wbm-tip { font-size: 11px; opacity: .5; }\n\n/* ---------- 已启用列表：折叠是 5 行高的滑动窗，展开是 15 行 ---------- */\n#wbm-list .wbm-actives {\n    display: flex;\n    flex-direction: column;\n    gap: 5px;\n    max-height: calc(33px * 5 + 5px * 4);\n    overflow-y: auto;\n    overflow-x: hidden;\n    /* 不给 contain：列表滑到尽头（或本身不够滑）时，余下的手势要继续交给外层世界书面板，\n       否则收起态只有 5 行高、滑条行程极短，手指在里面划就是\"划不动\"的感觉 */\n    overscroll-behavior: auto;\n    /* 把重排限制在列表内部：键盘收起触发整页重排时，外部不必重算每一行 */\n    contain: content;\n}\n#wbm-list.expanded .wbm-actives,\n#wbm-list.searching .wbm-actives {\n    max-height: calc(33px * 15 + 5px * 14);\n}\n#wbm-list .wbm-row {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    padding: 6px 10px;\n    min-height: 33px;\n    border-radius: 9px;\n    background: var(--SmartThemeBlurTintColor, rgba(255, 255, 255, .06));\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .15));\n    cursor: pointer;\n}\n#wbm-list .wbm-row.editing { border-color: var(--SmartThemeQuoteColor, #c9a86a); }\n#wbm-list .wbm-row.confirming { border-color: #c0392b; }\n#wbm-list .wbm-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 14px;\n}\n#wbm-list .wbm-hint { flex: 0 0 auto; font-size: 11px; opacity: .55; }\n#wbm-list .wbm-kill {\n    flex: 0 0 auto;\n    padding: 2px 8px;\n    font-size: 12px;\n    border: 1px solid var(--SmartThemeBorderColor, #666);\n    background: transparent;\n    color: inherit;\n    border-radius: 999px;\n    cursor: pointer;\n}\n#wbm-list .wbm-row.confirming .wbm-kill { border-color: #c0392b; color: #e74c3c; }\n\n/* ---------- 展开 / 收起 ---------- */\n#wbm-list .wbm-more {\n    align-self: center;\n    padding: 4px 14px;\n    font-size: 12px;\n    opacity: .85;\n    border: 1px solid var(--SmartThemeBorderColor, #666);\n    background: transparent;\n    color: inherit;\n    border-radius: 999px;\n    cursor: pointer;\n}\n\n/* ---------- 添加面板 ---------- */\n/* 与已启用列表同一款式：不套外框，直接是搜索框 + 同形制的行，右边自然对齐 */\n#wbm-list .wbm-addpanel {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    padding: 0;\n    border: none;\n    background: none;\n    border-radius: 0;\n}\n#wbm-list .wbm-addlist {\n    display: flex;\n    flex-direction: column;\n    gap: 4px;\n    /* 固定像素高度：vh 会随手机键盘弹出而变，一变小一变大就是两次整页重排 */\n    max-height: 280px;\n    overflow-y: auto;\n    overflow-x: hidden;\n    /* 同上：到底后把余下的滑动交还给面板 */\n    overscroll-behavior: auto;\n    contain: content;\n}\n#wbm-list .wbm-addrow {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    padding: 6px 10px;\n    min-height: 33px;\n    border-radius: 9px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .15));\n    background: var(--SmartThemeBlurTintColor, rgba(255, 255, 255, .06));\n    cursor: pointer;\n}\n#wbm-list .wbm-addrow:hover { background: rgba(255, 255, 255, .05); }\n#wbm-list .wbm-addrow.on {\n    border-color: rgba(120, 200, 140, .6);\n    background: rgba(120, 200, 140, .12);\n}\n#wbm-list .wbm-addname {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 14px;\n}\n#wbm-list .wbm-addmark { flex: 0 0 auto; font-size: 12px; opacity: .75; }\n#wbm-list .wbm-addrow.on .wbm-addmark { color: #7ec890; opacity: 1; }\n#wbm-list .wbm-none,\n#wbm-list .wbm-empty { font-size: 12px; opacity: .6; padding: 4px 2px; }\n\n@media (max-width: 1000px) {\n    /* 手机上让世界书区独占一整行，避免被左侧栏挤到溢出（只在已接管时生效） */\n    #WIMultiSelector[data-wbm-ready=\"1\"] { flex: 1 1 100% !important; width: 100% !important; }\n    /* 自绘列表的头部已经写明\"已启用 N 本\"，ST 那行提示可省 */\n    #WIMultiSelector[data-wbm-ready=\"1\"] > .range-block-title { display: none; }\n    #wbm-list .wbm-addlist { max-height: 260px; }\n    /* 整块列表区左右各留 12px：让头部、搜索框、已启用列表、添加面板、展开按钮\n       一起缩进（视觉对齐），留白不属于任何滚动容器，手指落在上面就是拖整个面板。 */\n    #wbm-list { padding: 0 12px; }\n    /* 「全局世界书激活设置」那一栏：常态就占满整行，不要点开之后才变宽 */\n    #WorldInfo .range-block > .inline-drawer { width: 100%; flex: 1 1 100%; min-width: 0; }\n    #WorldInfo .range-block > .inline-drawer > .inline-drawer-header { width: 100%; box-sizing: border-box; }\n}\n\n/* ---------- 「选择以编辑」：手机端用仿原生的全屏列表 + 顶部搜索 ---------- */\n.wbm-editor-wrap { display: none; }\n\n@media (max-width: 1000px) {\n    #world_editor_select { display: none !important; }\n    /* 酒馆给这个下拉套出来的 select2 替身必须一起藏：只藏了原生 select 的话，\n       窄屏上会出现\"两个选择器\"并排抢宽度，书名一长就把右边的分类图标挤出行外。 */\n    #world_popup .wbm-world-row .select2-container { display: none !important; }\n\n    .wbm-editor-wrap {\n        display: block;\n        flex: 1 1 auto;\n        min-width: 0;\n        width: auto;\n    }\n    .wbm-editor-btn {\n        display: block;\n        width: 100%;\n        min-width: 110px;\n        padding: 6px 10px;\n        font-size: 13px;\n        text-align: center;\n        border-radius: 8px;\n        border: 1px solid var(--SmartThemeBorderColor, #666);\n        background: var(--black30a, rgba(0, 0, 0, .2));\n        color: inherit;\n        cursor: pointer;\n        white-space: nowrap;\n        overflow: hidden;\n        text-overflow: ellipsis;\n        position: relative;\n        z-index: 1;\n    }\n    .wbm-editor-btn.active { border-color: var(--SmartThemeQuoteColor, #c9a86a); }\n}\n\n/* 全屏选择器：外观贴 ST 原生弹窗 + 手机原生 sheet 的手势暗示，只为在顶部加一条实时搜索。\n   全部为静态样式与一次性动画，没有滚动监听也没有常驻 rAF。 */\n.wbm-picker {\n    position: fixed;\n    inset: 0;\n    z-index: 2147483000;\n    display: flex;\n    /* 垂直居中（原来是 flex-end 贴底）：手机键盘弹起时，贴底的窗口会被输入法整块盖住；\n       居中的话窗口主体落在屏幕中段，输入框和列表都还在可视范围里。 */\n    align-items: center;\n    justify-content: center;\n    background: rgba(0, 0, 0, .6);\n    animation: wbm-mask-in .14s ease-out both;\n}\n.wbm-picker.closing { animation: wbm-mask-out .16s ease-in both; }\n\n.wbm-picker-sheet {\n    display: flex;\n    flex-direction: column;\n    width: 100%;\n    max-width: 760px;\n    /* dvh 随键盘变化，键盘弹起时窗口自己变矮；720px 是桌面上的上限，免得窗口过大 */\n    max-height: min(82dvh, 720px);\n    margin: 8px;\n    border-radius: 16px;\n    border: 1px solid var(--SmartThemeBorderColor, #444);\n    background: var(--SmartThemeBlurTintColor, #1c1c26);\n    /* 顶沿一道极淡高光，面板才不像一块贴上去的灰板 */\n    box-shadow: 0 -2px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .07);\n    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));\n    overflow: hidden;\n    animation: wbm-sheet-in .18s cubic-bezier(.2, .8, .2, 1) both;\n}\n.wbm-picker.closing .wbm-picker-sheet { animation: wbm-sheet-out .16s ease-in both; }\n\n/* 抓握条：暗示这是从底部升起、可下滑收起的面板 */\n.wbm-picker-grip {\n    flex: 0 0 auto;\n    width: 36px;\n    height: 4px;\n    margin: 8px auto 0;\n    border-radius: 999px;\n    background: var(--SmartThemeBorderColor, rgba(255, 255, 255, .3));\n    opacity: .8;\n}\n\n.wbm-picker-head {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    padding: 8px 10px 10px;\n    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .3));\n}\n\n/* 搜索胶囊：视觉重心给它，ST 的 .text_pole 方框不再参与 */\n.wbm-picker-field {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    flex: 1 1 auto;\n    min-width: 0;\n    height: 42px;\n    padding: 0 14px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .16));\n    background: rgba(128, 128, 128, .22);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 8%, transparent);\n    transition: border-color .15s ease;\n}\n.wbm-picker-field:focus-within { border-color: var(--SmartThemeQuoteColor, #c9a86a); }\n.wbm-picker-icon {\n    flex: 0 0 auto;\n    width: 16px;\n    font-size: 13px;\n    text-align: center;\n    opacity: .6;\n}\n.wbm-picker-search {\n    flex: 1 1 auto;\n    min-width: 0;\n    width: auto;\n    height: 100%;\n    margin: 0;\n    padding: 0;\n    border: none;\n    border-radius: 0;\n    background: transparent;\n    box-shadow: none;\n    outline: none;\n    color: inherit;\n    caret-color: var(--SmartThemeQuoteColor, currentColor);\n    font-family: inherit;\n    font-size: 15px;\n}\n.wbm-picker-search::-webkit-search-cancel-button,\n.wbm-picker-search::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }\n.wbm-picker-search::placeholder { color: inherit; opacity: .45; }\n\n/* ✕ 只做幽灵按钮，不跟搜索抢视觉；按下去才有底色 */\n.wbm-picker-close {\n    flex: 0 0 auto;\n    width: 38px;\n    height: 38px;\n    padding: 0;\n    border: none;\n    border-radius: 11px;\n    background: transparent;\n    color: inherit;\n    font-size: 15px;\n    line-height: 1;\n    opacity: .7;\n    cursor: pointer;\n}\n.wbm-picker-close:active {\n    background: rgba(128, 128, 128, .28);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 16%, transparent);\n    opacity: 1;\n}\n\n.wbm-picker-list {\n    flex: 1 1 auto;\n    min-height: 0;\n    overflow-y: auto;\n    overflow-x: hidden;\n    overscroll-behavior: contain;\n    padding: 6px 8px 10px;\n    /* 上下渐隐，一眼看出还能继续滚；纯 CSS，没有滚动监听 */\n    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 4px, #000 calc(100% - 8px), transparent 100%);\n    mask-image: linear-gradient(to bottom, transparent 0, #000 4px, #000 calc(100% - 8px), transparent 100%);\n}\n\n/* 行改成内缩的圆角块：选中行才浮主题色底，其余只在按下时给反馈 */\n.wbm-picker-row {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    min-height: 48px;\n    margin: 2px 0;\n    padding: 0 12px;\n    border-radius: 10px;\n    font-size: 16px;\n    cursor: pointer;\n    transition: background-color .12s ease;\n}\n.wbm-picker-row:active {\n    background: rgba(128, 128, 128, .18);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 12%, transparent);\n}\n.wbm-picker-row.active {\n    background: rgba(128, 128, 128, .16);\n    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #c9a86a) 16%, transparent);\n    /* 左沿一道主题色细条：比纯底色更容易一眼认出\"当前编辑的是这本\" */\n    box-shadow: inset 3px 0 0 var(--SmartThemeQuoteColor, #c9a86a);\n}\n.wbm-picker-row.active .wbm-picker-name { font-weight: 600; }\n.wbm-picker-exit { min-height: 44px; font-size: 15px; opacity: .72; }\n\n/* 分栏标题：粘在列表顶端，长名单滚下去也知道自己在哪一组。\n   底色跟面板本体取同一个变量，滚动时不会透出下面的行。 */\n.wbm-picker-group {\n    position: sticky;\n    top: 0;\n    z-index: 1;\n    display: flex;\n    align-items: baseline;\n    gap: 8px;\n    margin: 6px 0 2px;\n    padding: 8px 12px 6px;\n    background: var(--SmartThemeBlurTintColor, #1c1c26);\n}\n\n.wbm-picker-group-title {\n    color: var(--SmartThemeQuoteColor, inherit);\n    font-size: 13px;\n    letter-spacing: .4px;\n    opacity: .9;\n}\n\n.wbm-picker-group-count {\n    font-size: 12px;\n    opacity: .55;\n}\n\n/* 悬浮窗的标题行（世界书分类用；「选择以编辑」不显示，保持原样） */\n.wbm-picker-title {\n    flex: 0 0 auto;\n    padding: 2px 18px 8px;\n    font-size: 15px;\n    font-weight: 600;\n    letter-spacing: .3px;\n    color: var(--SmartThemeQuoteColor, inherit);\n}\n\n/* 「世界书分类」入口：一枚图标，紧跟在「选择以编辑」右侧（两者都是\"挑一本书\"）。\n   尺寸按手指能点中来做，不靠缩小换空间。 */\n.wbm-cat-btn {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 34px;\n    height: 32px;\n    margin: 0;\n    padding: 0;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, #666);\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 8%, transparent);\n    color: inherit;\n    cursor: pointer;\n}\n\n.wbm-cat-btn:hover {\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n}\n\n.wbm-cat-btn .fa-solid {\n    font-size: 14px;\n    line-height: 1;\n}\n\n/* 手机端用来把「世界书选择」那排折成两排的零高节点；桌面不需要，常态关掉 */\n.wbm-rowbreak { display: none; }\n\n/* ---------- 全局启用预设：世界书面板里「Active World(s)」下面的一行 ---------- */\n.wbm-preset-row {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    width: 100%;\n    margin-top: 6px;\n}\n\n.wbm-preset-row .wbm-favbar-label { flex: 0 0 auto; }\n\n/* 看起来像下拉的按钮：点开是我们自己的浮层（原生 select 改不了选项字体） */\n.wbm-preset-btn {\n    flex: 1 1 8em;\n    min-width: 0;\n    height: 30px;\n    padding: 0 8px;\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    font-family: inherit;\n    font-size: 12px;\n    border-radius: 6px;\n    text-align: left;\n}\n\n.wbm-preset-btn-text {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-preset-caret {\n    flex: 0 0 auto;\n    width: 0;\n    height: 0;\n    border-left: 4px solid transparent;\n    border-right: 4px solid transparent;\n    border-top: 5px solid currentColor;\n    opacity: .7;\n}\n\n/* 预设浮层里每行右侧的本数：等宽小字，跟名字拉开层级 */\n.wbm-picker-count {\n    flex: 0 0 auto;\n    margin-left: auto;\n    padding-left: 8px;\n    font-family: ui-monospace, \"Cascadia Mono\", Consolas, \"Courier New\", monospace;\n    font-size: 11px;\n    letter-spacing: .5px;\n    opacity: .7;\n    white-space: nowrap;\n}\n\n/* 预设行：本数直接顶到最右（不再让单选圈占住右边），\n   当前那套靠整行高亮 + 名字加粗区分 */\n.wbm-preset-opt .wbm-picker-name { flex: 1 1 auto; }\n\n/* 预设行里键多（分组/改名/覆盖/删除），窄屏允许折一行 */\n.wbm-preset-opt {\n    flex-wrap: wrap;\n    row-gap: 4px;\n}\n\n.wbm-preset-opt .wbm-picker-radio { display: none; }\n\n/* 四个小键的容器：电脑端仍排在名字右边，本数照旧顶到最右 */\n.wbm-preset-opt .wbm-preset-tools {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    flex: 0 0 auto;\n    margin-left: 8px;\n}\n\n.wbm-preset-opt .wbm-preset-tools .wbm-preset-tool { margin-left: 0; }\n\n/* 手机端：名字与「N 本」在第二行，四个小键整格挪到下方靠右。\n   之前四个键挤在名字右边（合计两百多像素），长名字只剩几十像素、全被省略号吃掉。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    .wbm-preset-opt { padding-top: 7px; padding-bottom: 7px; }\n    .wbm-preset-opt .wbm-picker-name { order: 1; }\n    .wbm-preset-opt .wbm-picker-count { order: 2; }\n    .wbm-preset-opt .wbm-preset-tools {\n        order: 3;\n        flex: 0 0 100%;\n        justify-content: flex-end;\n        margin: 2px 0 0;\n    }\n}\n\n.wbm-preset-opt.active .wbm-picker-name::before {\n    content: \"✓ \";\n    color: var(--SmartThemeQuoteColor, inherit);\n}\n\n.wbm-preset-save {\n    flex: 0 0 auto;\n    height: 30px;\n    padding: 0 11px;\n    border-radius: 999px;\n    font-size: 12px;\n    line-height: 1;\n}\n\n/* 存名字的小行：留空就用\"预设N\"，所以占位提示里写的就是那个默认名 */\n.wbm-preset-saverow {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    width: 100%;\n}\n\n.wbm-preset-saverow[hidden] { display: none; }\n\n.wbm-preset-name {\n    flex: 1 1 8em;\n    min-width: 0;\n    height: 30px;\n    font-family: inherit;\n    font-size: 13px;\n}\n\n/* ---------- 预设管理（在分类面板里）：一项一张卡片，项与项之间留白 ---------- */\n.wbm-preset-sect { padding-top: 10px; }\n\n.wbm-preset-list {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    padding: 6px 14px 0;\n}\n\n.wbm-preset-item {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    padding: 8px;\n    border-radius: 9px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);\n}\n\n/* 第一行：名字占满左侧，本数顶到最右；第二行按键右对齐 */\n.wbm-preset-item-line {\n    display: flex;\n    align-items: baseline;\n    gap: 8px;\n    width: 100%;\n}\n\n.wbm-preset-item-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    font-size: 13px;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-preset-item-name.on {\n    color: var(--SmartThemeQuoteColor, inherit);\n    font-weight: 600;\n}\n\n.wbm-preset-item-count {\n    flex: 0 0 auto;\n    margin-left: auto;\n    font-family: ui-monospace, \"Cascadia Mono\", Consolas, \"Courier New\", monospace;\n    font-size: 11px;\n    letter-spacing: .5px;\n    opacity: .72;\n    white-space: nowrap;\n}\n\n.wbm-preset-actions {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 6px;\n    justify-content: flex-end;\n    width: 100%;\n}\n\n.wbm-preset-item .wbm-chip {\n    flex: 0 0 auto;\n    height: 30px;\n    padding: 0 10px;\n    border-radius: 999px;\n    font-size: 12px;\n    line-height: 1;\n}\n\n.wbm-preset-item .wbm-chip.danger {\n    color: var(--SmartThemeEmColor, #d08a8a);\n    border-color: var(--SmartThemeEmColor, rgba(208, 138, 138, .6));\n}\n\n.wbm-preset-item .wbm-preset-name { flex: 1 1 6em; }\n\n/* ---- 预设分组：组名一行（名字 + 几套 + 改名/删除），下面是该组的预设卡片 ---- */\n.wbm-preset-group-head {\n    display: flex;\n    align-items: center;\n    flex-wrap: wrap;\n    gap: 8px;\n    margin: 8px 0 2px;\n    padding: 4px 2px 4px 6px;\n    border-left: 2px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n}\n\n.wbm-preset-group-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 13px;\n    font-weight: 600;\n    color: var(--SmartThemeQuoteColor, inherit);\n}\n\n.wbm-preset-group-count {\n    flex: 0 0 auto;\n    font-family: ui-monospace, \"Cascadia Mono\", Consolas, \"Courier New\", monospace;\n    font-size: 11px;\n    letter-spacing: .5px;\n    opacity: .7;\n    white-space: nowrap;\n}\n\n.wbm-preset-group-actions {\n    flex: 0 0 auto;\n    display: flex;\n    gap: 4px;\n}\n\n.wbm-preset-group-actions .wbm-chip {\n    height: 26px;\n    padding: 0 9px;\n    border-radius: 999px;\n    font-size: 11px;\n    line-height: 1;\n}\n\n.wbm-group-rename-input {\n    flex: 1 1 100%;\n    margin: 2px 0 4px;\n}\n\n.wbm-preset-group-actions .wbm-chip.danger {\n    color: var(--SmartThemeEmColor, #d08a8a);\n    border-color: var(--SmartThemeEmColor, rgba(208, 138, 138, .6));\n}\n\n/* 浮层里的分组小标题（不可点） */\n.wbm-picker-group-label {\n    padding: 10px 14px 4px;\n    font-size: 12px;\n    font-weight: 600;\n    color: var(--SmartThemeQuoteColor, inherit);\n    opacity: .85;\n}\n\n/* 浮层里每套预设右侧的小键：分组 / 删除（删除第一下变「确认」） */\n.wbm-preset-tool {\n    flex: 0 0 auto;\n    margin-left: 8px;\n    padding: 3px 9px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1.2;\n    cursor: pointer;\n}\n\n.wbm-preset-tool.armed {\n    border-color: var(--SmartThemeEmColor, rgba(208, 138, 138, .7));\n    color: var(--SmartThemeEmColor, #d08a8a);\n    font-weight: 600;\n}\n\n/* 分组管理区（分组浮层里的组名行，可改名 / 删除） */\n.wbm-group-mgmt {\n    padding: 4px 14px 2px;\n}\n\n.wbm-group-mgmt-row {\n    display: flex;\n    align-items: center;\n    flex-wrap: wrap;\n    gap: 8px;\n    padding: 6px 8px;\n    margin-bottom: 6px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);\n}\n\n.wbm-group-mgmt-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    font-size: 13px;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-group-mgmt-tools {\n    flex: 0 0 auto;\n    display: flex;\n    gap: 6px;\n}\n\n.wbm-name-input-inline {\n    width: 100%;\n    height: 30px;\n    font-size: 13px;\n    /* 跟随主题：原来是不带背景/颜色的裸 input，截图里就是一格刺眼的白底 */\n    padding: 0 8px;\n    border-radius: 6px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .9)) 92%, transparent);\n    color: var(--SmartThemeBodyColor, inherit);\n    font-family: inherit;\n}\n\n.wbm-name-input-inline:focus {\n    outline: none;\n    border-color: var(--SmartThemeEmColor, rgba(156, 123, 214, .8));\n}\n\n/* 分类面板里显示这套预设属于哪一组（只做提示，不给操作） */\n.wbm-preset-item-group {\n    flex: 0 0 auto;\n    font-size: 11px;\n    opacity: .65;\n    white-space: nowrap;\n}\n\n/* 新建分组那一行（浮层底部） */\n.wbm-group-new {\n    padding: 8px 14px 12px;\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));\n}\n\n\n/* 可横滑的条：右端渐隐，告诉手指右边还有东西；滑到底（data-xh=\"end\"）渐隐自动消失。\n   状态由 JS 写在 data-xh 上，滚动时才写，没有常驻开销。 */\n.wbm-batch-bar[data-xh=\"start\"],\n.wbm-batch-bar[data-xh=\"mid\"],\n.wbm-entry-favbar[data-xh=\"start\"],\n.wbm-entry-favbar[data-xh=\"mid\"],\n.wbm-favbar[data-xh=\"start\"],\n.wbm-favbar[data-xh=\"mid\"] {\n    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), rgba(0, 0, 0, 0));\n    mask-image: linear-gradient(to right, #000 calc(100% - 40px), rgba(0, 0, 0, 0));\n}\n\n/* 电脑端：「选择以编辑」是酒馆自己的 select2，分组靠 <optgroup> 传下去，\n   这里只给它的分组标题上主题色，让它和手机端的分栏长得一样 */\n/* ---------- 世界书分类面板：两段（绑定中 / 未绑定）+ 小组行 ---------- */\n.wbm-cat-sect {\n    padding: 2px 0 10px;\n}\n\n.wbm-cat-sect + .wbm-cat-sect {\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));\n    padding-top: 10px;\n}\n\n.wbm-cat-sect-head {\n    display: flex;\n    align-items: baseline;\n    gap: 8px;\n    padding: 6px 14px 4px;\n}\n\n.wbm-cat-sect-title {\n    font-size: 13px;\n    letter-spacing: .5px;\n    color: var(--SmartThemeQuoteColor, inherit);\n}\n\n/* 分类面板顶部的搜索条：输入框 + 两个模式键 */\n.wbm-cat-search {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    padding: 0 12px 8px;\n    flex-wrap: nowrap;\n}\n\n.wbm-cat-input {\n    flex: 1 1 auto;\n    min-width: 0;\n    height: 32px;\n}\n\n.wbm-cat-search .wbm-chip-sm {\n    flex: 0 0 auto;\n    height: 32px;\n}\n\n/* 归属排法说明：一行小灰字，让用户不用猜\"这本书为什么不在全局那组\" */\n.wbm-cat-note {\n    padding: 0 14px 8px;\n    font-size: 11.5px;\n    line-height: 1.5;\n    opacity: .62;\n}\n\n/* 还没扫描时的提醒：换成强调色，和普通说明区分开 */\n.wbm-cat-note.wbm-cat-warn {\n    opacity: .95;\n    color: var(--SmartThemeEmColor, #e1ecaa);\n}\n\n.wbm-cat-group {\n    margin: 0 6px;\n    border-radius: 8px;\n}\n\n.wbm-cat-group-head {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    padding: 9px 10px;\n    border-radius: 8px;\n    cursor: pointer;\n}\n\n.wbm-cat-group-head:hover {\n    background: rgba(128, 128, 128, .10);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 7%, transparent);\n}\n\n.wbm-cat-group-head.open {\n    background: rgba(128, 128, 128, .14);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 10%, transparent);\n}\n\n.wbm-cat-caret {\n    flex: 0 0 auto;\n    width: 12px;\n    font-size: 11px;\n    opacity: .7;\n}\n\n.wbm-cat-group-title {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 14px;\n}\n\n/* 交叉提示：一句话，不落在每一行上 */\n.wbm-cat-cross {\n    flex: 0 0 auto;\n    font-size: 11px;\n    opacity: .62;\n}\n\n.wbm-cat-scanhint {\n    flex: 0 0 auto;\n    font-size: 11px;\n    color: var(--SmartThemeQuoteColor, inherit);\n    opacity: .9;\n}\n\n/* 组内滚动：展开一组时只在这块里滚，别的组不被推走 */\n.wbm-cat-books {\n    max-height: 60vh;\n    overflow-y: auto;\n    overscroll-behavior-y: contain;\n    padding: 2px 0 6px;\n}\n\n/* 交叉标记：零文字的圆点，悬停才说明 */\n.wbm-cat-dot {\n    flex: 0 0 auto;\n    width: 6px;\n    height: 6px;\n    margin-right: 8px;\n    border-radius: 50%;\n    background: var(--SmartThemeQuoteColor, rgba(200, 170, 110, .9));\n    opacity: .85;\n}\n\n.wbm-cat-check {\n    flex: 0 0 auto;\n    width: 18px;\n    height: 18px;\n    margin: 0 2px 0 8px;\n    accent-color: var(--SmartThemeQuoteColor, #c9a86a);\n}\n\n.wbm-cat-scanbar {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    flex-wrap: wrap;\n    padding: 2px 12px 8px;\n}\n\n.wbm-cat-scanstate {\n    flex: 1 1 140px;\n    min-width: 0;\n    font-size: 12px;\n    line-height: 1.5;\n    opacity: .75;\n}\n\n.wbm-cat-delbar {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    flex-wrap: wrap;\n    padding: 8px 12px 10px;\n    border-top: 1px dashed var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n}\n\n.wbm-cat-del-label {\n    flex: 1 1 100%;\n    font-size: 12px;\n    line-height: 1.5;\n    opacity: .85;\n}\n\n.select2-results__group,\n.select2-results__option--group {\n    color: var(--SmartThemeQuoteColor, inherit);\n    background: transparent;\n    font-size: .82em;\n    font-weight: 600;\n    letter-spacing: .3px;\n    padding: 6px 8px 2px;\n    cursor: default;\n}\n\n.wbm-picker-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n/* 圆环 → 选中时填主题色并打勾 */\n.wbm-picker-radio {\n    position: relative;\n    flex: 0 0 auto;\n    width: 20px;\n    height: 20px;\n    border-radius: 50%;\n    border: 2px solid var(--SmartThemeBorderColor, rgba(170, 170, 170, .9));\n    box-sizing: border-box;\n    transition: background-color .12s ease, border-color .12s ease;\n}\n.wbm-picker-row.active .wbm-picker-radio {\n    border-color: var(--SmartThemeQuoteColor, #d4b06a);\n    background: var(--SmartThemeQuoteColor, #d4b06a);\n}\n.wbm-picker-row.active .wbm-picker-radio::after {\n    content: '';\n    position: absolute;\n    left: 50%;\n    top: 50%;\n    width: 5px;\n    height: 9px;\n    border: solid var(--SmartThemeBlurTintColor, #1c1c26);\n    border-width: 0 2px 2px 0;\n    box-sizing: border-box;\n    transform: translate(-50%, -58%) rotate(42deg);\n}\n\n.wbm-picker-empty {\n    padding: 26px 12px;\n    text-align: center;\n    font-size: 14px;\n    opacity: .55;\n}\n\n/* 移动 / 复制：标题行 + 底部两个动作按钮 */\n/* 搜索面开关（标题 / 关键词 / 正文）：默认全开，可逐个关掉；关掉的变暗只剩描边 */\n.wbm-picker-filters {\n    flex: 0 0 auto;\n    display: flex;\n    gap: 8px;\n    padding: 2px 12px 0;\n}\n.wbm-picker-chip {\n    flex: 0 0 auto;\n    height: 30px;\n    padding: 0 13px;\n    border-radius: 999px;\n    border: 1px solid rgba(128, 128, 128, .45);\n    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 30%, transparent);\n    background: transparent;\n    color: inherit;\n    font-family: inherit;\n    font-size: 13px;\n    line-height: 1;\n    opacity: .55;\n    cursor: pointer;\n    transition: opacity .12s ease, background-color .12s ease, border-color .12s ease;\n}\n.wbm-picker-chip.on {\n    opacity: 1;\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n    background: rgba(128, 128, 128, .18);\n    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #c9a86a) 16%, transparent);\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-weight: 600;\n}\n.wbm-picker-chip:active {\n    background: rgba(128, 128, 128, .28);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 16%, transparent);\n}\n\n.wbm-picker-title {\n    flex: 0 0 auto;\n    padding: 10px 12px 2px;\n    font-size: 13px;\n    opacity: .8;\n    overflow-wrap: anywhere;\n}\n.wbm-picker-actions {\n    flex: 0 0 auto;\n    display: flex;\n    flex-wrap: wrap;\n    gap: 8px;\n    padding: 8px 10px 4px;\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .3));\n}\n/* 底部动作按钮：直接照 ST 自己的 .menu_button 走（底色=主题模糊层、描边=主题描边、\n   按下用 brightness 提亮），这样换主题时和酒馆里其它按钮一起变，不会像外挂 */\n.wbm-picker-action {\n    flex: 1 1 0;\n    min-width: 0;\n    height: 40px;\n    border-radius: 10px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: var(--SmartThemeBlurTintColor, rgba(0, 0, 0, .2));\n    color: var(--SmartThemeBodyColor, inherit);\n    font-family: inherit;\n    font-size: 14px;\n    cursor: pointer;\n    filter: grayscale(.5);\n    transition: filter .12s ease, background-color .12s ease;\n}\n.wbm-picker-action.primary {\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    filter: none;\n}\n/* 主按钮独占一行：三个按钮挤在一行时手机上文字必被压扁 */\n.wbm-picker-action.wide { flex: 1 1 100%; }\n.wbm-picker-action:active { filter: grayscale(.2) brightness(1.25); }\n.wbm-picker-action.primary:active { filter: brightness(1.25); }\n.wbm-picker-action:disabled { opacity: .45; filter: grayscale(1); cursor: default; }\n\n/* 多选用的方块勾（批量搬运条目时用） */\n.wbm-picker-box {\n    position: relative;\n    flex: 0 0 auto;\n    width: 20px;\n    height: 20px;\n    border-radius: 6px;\n    border: 2px solid var(--SmartThemeBorderColor, rgba(170, 170, 170, .9));\n    box-sizing: border-box;\n    transition: background-color .12s ease, border-color .12s ease;\n}\n.wbm-picker-row.active .wbm-picker-box {\n    border-color: var(--SmartThemeQuoteColor, #d4b06a);\n    background: var(--SmartThemeQuoteColor, #d4b06a);\n}\n.wbm-picker-row.active .wbm-picker-box::after {\n    content: '';\n    position: absolute;\n    left: 50%;\n    top: 50%;\n    width: 5px;\n    height: 9px;\n    border: solid var(--SmartThemeBlurTintColor, #1c1c26);\n    border-width: 0 2px 2px 0;\n    box-sizing: border-box;\n    transform: translate(-50%, -58%) rotate(42deg);\n}\n\n/* 批量移动/复制入口：条目列表上方的小按钮 */\n.wbm-batch-bar {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 8px;\n    justify-content: flex-end;\n    margin: 2px 0 6px;\n}\n/* 分组小框：和筛选条同形制（圆角、主题描边、极淡底色），标注在左 */\n.wbm-tool-group {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    padding: 6px 8px;\n    border-radius: 9px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);\n}\n/* 工具栏按键：底色/描边/文字全部交给酒馆的 .menu_button（那就跟着主题走），\n   这里只管圆角与内距，和筛选条的胶囊保持同一形制。 */\n.wbm-batch-btn {\n    flex: 0 0 auto;\n    width: auto;\n    margin: 0;\n    height: 26px;\n    padding: 5px 11px;\n    border-radius: 999px;\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1;\n    white-space: nowrap;\n    cursor: pointer;\n}\n.wbm-batch-btn:active { filter: brightness(1.3); }\n\n/* 删除按钮：危险动作单独一档颜色，按一下变「确认删除 N 条」再由主题强调色提醒 */\n.wbm-picker-action.danger {\n    border-color: var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    color: var(--SmartThemeEmColor, #d08a8a);\n    filter: none;\n}\n.wbm-picker-action.danger.armed {\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-weight: 600;\n}\n/* 历史记录里的「恢复」小按钮 */\n.wbm-hist-restore {\n    flex: 0 0 auto;\n    height: 28px;\n    padding: 0 12px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-family: inherit;\n    font-size: 12px;\n    cursor: pointer;\n}\n.wbm-hist-restore:active { background: rgba(128, 128, 128, .24); }\n\n/* 原书已经被删掉的删除记录：恢复不了，给一个安静的标记代替「恢复」按钮 */\n.wbm-hist-gone {\n    flex: 0 0 auto;\n    padding: 3px 9px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    font-size: 12px;\n    line-height: 1.4;\n    opacity: .6;\n    white-space: nowrap;\n}\n\n/* 批量替换窗口：替换词输入行 + 命中片段行 */\n.wbm-replace-row {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    padding: 2px 12px 8px;\n}\n.wbm-replace-label {\n    flex: 0 0 auto;\n    font-size: 12px;\n    opacity: .65;\n    white-space: nowrap;\n}\n.wbm-replace-field {\n    flex: 1 1 auto;\n    min-width: 0;\n    margin: 0 !important;\n    padding: 6px 9px;\n    font-size: 13px;\n    border-radius: 8px;\n}\n.wbm-replace-chips {\n    flex-wrap: wrap;\n    padding: 0 12px 6px;\n    justify-content: flex-start;\n}\n.wbm-replace-hit {\n    font-size: 12px;\n    line-height: 1.45;\n    opacity: .72;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n/* 操作历史的行：第一行是\"时间 动作 N 条：A → B\"，第二行是条目名 */\n.wbm-hist-row {\n    align-items: flex-start;\n    padding: 9px 12px;\n}\n.wbm-hist-col {\n    display: flex;\n    flex-direction: column;\n    gap: 2px;\n    flex: 1 1 auto;\n    min-width: 0;\n}\n.wbm-hist-line {\n    font-size: 14px;\n    line-height: 1.35;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n.wbm-hist-names {\n    font-size: 12px;\n    line-height: 1.3;\n    opacity: .62;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n/* 收藏筛选条：★ 收藏（只看收藏）与 收藏置顶 开关并排 */\n.wbm-favbar {\n    display: flex;\n    gap: 6px;\n    padding: 0 2px 2px;\n}\n/* 这两个键同时带 .menu_button：底色、描边、文字全交给酒馆自己的按钮样式，\n   主题里改 .menu_button 时它们跟着一起变（以前写死透明底 + opacity，换主题就显得像外挂）。 */\n.wbm-chip {\n    flex: 0 0 auto;\n    width: auto;\n    margin: 0;\n    height: 26px;\n    padding: 0 11px;\n    border-radius: 999px;\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1;\n    white-space: nowrap;\n    cursor: pointer;\n}\n.wbm-chip.on {\n    border-color: var(--SmartThemeQuoteColor, #c9a86a);\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-weight: 600;\n    /* 酒馆原生按钮自带 grayscale(.5)，选中态要让它退回去，否则主题强调色会被洗灰 */\n    filter: none;\n}\n\n/* ---------- 移动端键盘卡顿：压住酒馆自己的 resize hack ----------\n   酒馆在 browser-fixes.js:84 里每次 resize 把 <html> 设成 position:fixed 再还原\n   （本意是修 iOS 的定位错位），代价是每次键盘弹出/收起都强制两次整页重排。\n   Android 上这纯属开销，所以 JS 会给 <html> 加这个 class；iOS 不加。\n   !important 能压住酒馆写进去的 inline style，赋值照旧、重排不再发生。 */\nhtml.wbm-quiet-resize {\n    position: static !important;\n}\n\n/* ---------- 条目搜索范围：贴在搜索框右边、排序下拉左边 ---------- */\n/* 那一行是宿主的静态工具条（图标 + 搜索框 + 排序下拉）。我们把三枚小键插在\n   搜索框与排序下拉之间，并接管两者原来的 flex:1，让排序下拉被裁短、把宽度让给搜索框。 */\n.wbm-search-scope {\n    display: flex;\n    align-items: center;\n    flex-wrap: wrap;\n    gap: 4px;\n    flex: 0 1 auto;\n    min-width: 0;\n}\n.wbm-scope-label {\n    flex: 0 0 auto;\n    font-size: 11px;\n    line-height: 1.4;\n    opacity: .55;\n    white-space: nowrap;\n}\n.wbm-chip-sm {\n    height: 22px;\n    padding: 0 8px;\n    font-size: 11px;\n    border-radius: 999px;\n}\n.wbm-scope-row #world_info_search {\n    flex: 1 1 120px;\n    min-width: 5em;\n}\n/* 排序下拉：从\"和搜索框各占一半\"改成固定一块，宽到能读完 Priority / Title A-Z */\n.wbm-scope-row #world_info_sort_order {\n    flex: 0 0 auto;\n    width: 8.5em;\n    min-width: 0;\n    max-width: 8.5em;\n}\n/* 手机/平板判定：不再只看宽度。\n   只写 \"max-width:760px\" 时，手机一横过来（844×390）和 iPad 竖屏（768）都掉到桌面样式里，\n   所以判据换成三种任命中其一：窄屏 / 短边矮（横屏手机）/ 触屏（iPad 等，宽度封顶 1100，\n   免得把触屏一体机也算进来）。CSS 不能在媒体查询里引用变量，这条表达式在三处出现，改要一起改。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    /* 窄屏上标签让位给三个键本身（键名已经说明了用途）；\n       排序下拉不再挤在同一行尾巴上，改为独占下一行、占满宽度，读起来才像个控件行 */\n    .wbm-scope-row .wbm-scope-label { display: none; }\n    .wbm-scope-row #world_info_sort_order {\n        flex: 1 1 100%;\n        width: auto;\n        max-width: none;\n    }\n    .wbm-chip-sm { height: 20px; padding: 0 6px; font-size: 10px; }\n}\n/* 行里的收藏星标：只切收藏，不触发跳转 */\n.wbm-star {\n    flex: 0 0 auto;\n    width: 28px;\n    height: 28px;\n    padding: 0;\n    border: none;\n    border-radius: 8px;\n    background: transparent;\n    color: inherit;\n    font-size: 15px;\n    line-height: 1;\n    opacity: .45;\n    cursor: pointer;\n}\n.wbm-star.on {\n    opacity: 1;\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n}\n.wbm-star:active { background: rgba(128, 128, 128, .24); }\n\n/* 条目列表的「仅收藏 / 收藏置顶」小条：紧跟在条目列表上方的工具栏下面 */\n/* 筛选条：整个框按内容收窄、靠右对齐；「筛选」标注紧贴第一个键，不飘到最左边 */\n.wbm-entry-favbar {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    justify-content: flex-start;\n    width: fit-content;\n    max-width: 100%;\n    margin: 0 0 6px auto;\n    padding: 6px 8px;\n    border-radius: 9px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .08);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);\n}\n/* 标注：字号跟着主题字号走，颜色取主题正文色，只在右侧拉一道分隔线 */\n.wbm-favbar-label {\n    flex: 0 0 auto;\n    padding-right: 8px;\n    margin-right: 2px;\n    border-right: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    color: var(--SmartThemeBodyColor, inherit);\n    font-size: 13px;\n    font-weight: 600;\n    line-height: 1.2;\n    opacity: .9;\n    white-space: nowrap;\n}\n/* 收藏筛选：用 class 隐藏，不动 inline display，免得和酒馆自己的搜索过滤打架 */\n#world_popup_entries_list .wbm-fav-hidden { display: none !important; }\n/* 置顶：只借 flex order 排视觉顺序，DOM 顺序保持原生（拖拽/分页/搜索都不受影响） */\n#world_popup_entries_list.wbm-order-on {\n    display: flex;\n    flex-direction: column;\n}\n\n/* 五个操作收在一个容器里：桌面排一行（收藏、预览、移动/复制、删除），手机排三行 */\n.wbm-entry-actions {\n    display: flex;\n    align-items: center;\n    gap: 2px;\n    flex: 0 0 auto;\n}\n@media (max-width: 1000px) {\n    .wbm-entry-actions {\n        display: flex;\n        flex-wrap: nowrap;\n        gap: 6px;\n        align-items: center;\n        justify-content: flex-end;\n        margin-left: auto;\n    }\n    /* 手机上按钮放大到手指好按：五个键等宽等高，排成一行 */\n    .wbm-entry-actions > * {\n        flex: 0 0 auto;\n        min-width: 38px;\n        height: 34px;\n        display: inline-flex;\n        align-items: center;\n        justify-content: center;\n        padding: 0 !important;\n        margin: 0 !important;\n        font-size: 16px;\n        line-height: 1;\n    }\n}\n.wbm-fav-entry-btn,\n.wbm-preview-btn {\n    flex: 0 0 auto;\n    cursor: pointer;\n    font-style: normal;\n    line-height: 1;\n    padding: 2px 7px !important;\n    font-size: 13px;\n    margin: 0 !important;\n}\n.wbm-fav-entry-btn { opacity: .55; }\n.wbm-fav-entry-btn.on {\n    opacity: 1;\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    /* 酒馆原生按钮带 grayscale(.5)，收藏态要露出主题强调色就得把它撤掉 */\n    filter: none;\n}\n\n/* 只读预览浮层 */\n.wbm-prev-title {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    font-size: 15px;\n    font-weight: 600;\n}\n.wbm-prev-body {\n    flex: 1 1 auto;\n    min-height: 0;\n    overflow-y: auto;\n    overscroll-behavior: contain;\n    padding: 4px 14px 14px;\n    -webkit-user-select: text;\n    user-select: text;\n}\n.wbm-prev-meta {\n    font-size: 12px;\n    opacity: .6;\n    margin-bottom: 8px;\n    overflow-wrap: anywhere;\n}\n.wbm-prev-keys {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 6px;\n    margin-bottom: 10px;\n}\n.wbm-prev-key {\n    padding: 2px 9px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .16);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 10%, transparent);\n    font-size: 12px;\n    line-height: 1.6;\n}\n/* 预览里的关键词分区：主要关键词 / 逻辑 / 可选过滤器，各自一行、标签在前 */\n.wbm-prev-kwlines {\n    margin-bottom: 4px;\n}\n.wbm-prev-kwline {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 6px;\n    margin-bottom: 8px;\n}\n.wbm-prev-kwlabel {\n    font-size: 12px;\n    font-weight: 600;\n    opacity: .65;\n    margin-right: 2px;\n    white-space: nowrap;\n}\n.wbm-prev-kwempty {\n    font-size: 12px;\n    opacity: .45;\n}\n.wbm-prev-kwvalue {\n    font-size: 12px;\n    opacity: .8;\n    overflow-wrap: anywhere;\n}\n.wbm-prev-text {\n    font-size: 14px;\n    line-height: 1.7;\n    white-space: pre-wrap;\n    overflow-wrap: anywhere;\n}\n\n\n/* ---------- 窄屏重排：标题行（标题＋触发策略）→ 字段网格 → 功能键 ---------- */\n@media (max-width: 1000px) {\n    /* 条目之间拉开距离并加分隔线，否则上下两条黏在一起分不清 */\n    #world_popup_entries_list .world_entry + .world_entry {\n        margin-top: 14px;\n        padding-top: 12px;\n        border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));\n    }\n    /* 折叠箭头、开关、拖动把手始终在条目头的同一条中线上：这里绝不能再改成 flex-start，\n       否则箭头和开关会飘到左上角，跟中间的 ☰ 错开（v2.4.0 的失误） */\n    #world_popup_entries_list .world_entry_thin_controls {\n        align-items: center;\n    }\n\n    /* 标题行：标题吃满剩下的宽度；触发策略（🔵/🟢/🔗）留在标题右边，\n       不再像之前那样被搬进字段网格、撑成一整条拉到满宽 */\n    #world_popup_entries_list .WIEntryTitleAndStatus {\n        flex: 1 1 100%;\n        width: 100%;\n        min-width: 0;\n        gap: 6px;\n    }\n    #world_popup_entries_list .WIEntryTitleAndStatus > .flex-container {\n        flex: 1 1 auto;\n        width: auto;\n        min-width: 0;\n    }\n    #world_popup_entries_list .WIEntryTitleAndStatus textarea[name=\"comment\"] {\n        width: 100% !important;\n    }\n    #world_popup_entries_list .WIEntryTitleAndStatus select[name=\"entryStateSelector\"] {\n        flex: 0 0 auto;\n        align-self: center;\n        width: auto !important;\n        min-width: 40px;\n        height: 32px;\n    }\n\n    /* 字段：标签小一号、控件撑满格子，四列宽度一致 */\n    #world_popup_entries_list .WIEnteryHeaderControls {\n        flex: 1 1 100%;\n        width: 100%;\n        display: grid;\n        grid-template-columns: repeat(2, minmax(0, 1fr));\n        gap: 8px 10px;\n        align-items: end;\n    }\n    #world_popup_entries_list .WIEnteryHeaderControls > * {\n        min-width: 0;\n    }\n    #world_popup_entries_list .WIEnteryHeaderControls .WIEntryHeaderTitleMobile {\n        display: block;\n        font-size: 12px;\n        line-height: 1.3;\n        opacity: .7;\n        margin: 0 0 2px;\n    }\n    #world_popup_entries_list .WIEnteryHeaderControls select,\n    #world_popup_entries_list .WIEnteryHeaderControls input {\n        width: 100% !important;\n        max-width: none !important;\n    }\n}\n\n/* 空间不够把五个键塞在标题行右边时（竖屏手机、横屏手机、平板）：整排锁在条目右下角，\n   标题与字段因此能用满整行。命中条件同上（窄屏 / 短边矮 / 触屏）。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    #world_popup_entries_list .world_entry .inline-drawer-header {\n        position: relative;\n        padding-bottom: 42px;\n    }\n    #world_popup_entries_list .wbm-entry-actions {\n        position: absolute;\n        right: 0;\n        bottom: 0;\n        margin: 0;\n    }\n}\n\n/* 横屏手机 / 平板：空间够了，字段排三列 */\n@media (min-width: 641px) and (max-width: 1000px) {\n    #world_popup_entries_list .WIEnteryHeaderControls {\n        grid-template-columns: repeat(3, minmax(0, 1fr));\n    }\n}\n\n/* 再宽一些、而且不是触屏（鼠标操作的窄窗）：五个键回到标题行右侧、跟标题对齐靠上。\n   触屏和平板一律留在右下角，那里最好按。 */\n@media (min-width: 761px) and (max-width: 1000px) and (pointer: fine) {\n    #world_popup_entries_list .wbm-entry-actions {\n        align-self: flex-start;\n        margin-top: 2px;\n    }\n}\n\n@keyframes wbm-mask-in { from { opacity: 0; } to { opacity: 1; } }\n@keyframes wbm-mask-out { from { opacity: 1; } to { opacity: 0; } }\n@keyframes wbm-sheet-in { from { transform: translateY(14px); opacity: .6; } to { transform: none; opacity: 1; } }\n@keyframes wbm-sheet-out { from { transform: none; opacity: 1; } to { transform: translateY(14px); opacity: 0; } }\n\n/* 操作历史顶部的容量提示：与上面「最近 N 条操作…」同一条左边线（标题内边距左 12px） */\n.wbm-hist-usage {\n    opacity: .5;\n    font-size: 11px;\n    padding: 0 12px;\n    margin: -2px 0 6px;\n}\n\n/* 危险操作提示条（递归开关等） */\n.wbm-warn-row {\n    margin: 0 0 8px;\n    padding: 8px 10px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .12);\n    background: color-mix(in srgb, var(--SmartThemeEmColor, #e1ecaa) 14%, transparent);\n    font-size: 12px;\n    line-height: 1.55;\n}\n\n/* 体检窗口：可展开的分类、条目行、正文摘录 */\n.wbm-health-cat {\n    display: flex;\n    flex-direction: column;\n    margin-bottom: 6px;\n}\n.wbm-health-head {\n    width: 100%;\n    text-align: left;\n    padding: 8px 10px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: rgba(128, 128, 128, .10);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 7%, transparent);\n    color: inherit;\n    font-family: inherit;\n    font-size: 13px;\n    line-height: 1.4;\n    cursor: pointer;\n}\n.wbm-health-head::before { content: '▸ '; opacity: .7; }\n.wbm-health-head.open::before { content: '▾ '; }\n.wbm-health-list {\n    display: flex;\n    flex-direction: column;\n    gap: 2px;\n    padding: 4px 0 6px 10px;\n}\n.wbm-health-linewrap { display: flex; flex-direction: column; }\n.wbm-health-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; }\n.wbm-health-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    text-align: left;\n    padding: 4px 6px;\n    border: none;\n    border-radius: 6px;\n    background: transparent;\n    color: var(--SmartThemeQuoteColor, #c9a86a);\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1.4;\n    cursor: pointer;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n.wbm-health-act {\n    flex: 0 0 auto;\n    padding: 3px 8px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: inherit;\n    font-family: inherit;\n    font-size: 11px;\n    line-height: 1.4;\n    opacity: .8;\n    cursor: pointer;\n}\n.wbm-health-excerpt { padding: 2px 6px 8px; }\n.wbm-health-body {\n    font-size: 12px;\n    line-height: 1.55;\n    white-space: pre-wrap;\n    opacity: .82;\n    max-height: 160px;\n    overflow-y: auto;\n}\n\n/* 体检：ⓘ 说明折叠 */\n.wbm-health-info {\n    align-self: flex-start;\n    margin: 0 0 6px;\n    padding: 5px 10px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1.4;\n    opacity: .8;\n    cursor: pointer;\n}\n.wbm-health-info.open { opacity: 1; }\n.wbm-health-info-body {\n    margin: 0 0 8px;\n    padding: 8px 10px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .35));\n    background: rgba(128, 128, 128, .08);\n    font-size: 12px;\n    line-height: 1.55;\n}\n.wbm-health-info-line { opacity: .85; }\n\n/* ---- 正文防误触：默认只读，双击进编辑，标题旁出「取消 / 保存」 ---- */\n.wbm-edit-actions {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    margin-left: 8px;\n    vertical-align: middle;\n}\n.wbm-edit-actions[hidden] { display: none !important; }\n.wbm-edit-btn {\n    font: inherit;\n    font-size: 12px;\n    line-height: 1;\n    padding: 4px 11px;\n    border-radius: 999px;\n    cursor: pointer;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .28));\n    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202020) 88%, transparent);\n    color: var(--SmartThemeBodyColor, #ddd);\n    transition: filter .12s ease, background .12s ease;\n}\n.wbm-edit-btn:hover { filter: brightness(1.18); }\n.wbm-edit-btn:active { filter: brightness(.92); }\n.wbm-edit-cancel { opacity: .85; }\n/* 确认键跟随酒馆主题：底色/描边取主题强调色（--SmartThemeQuoteColor），文字取正文色 */\n.wbm-edit-save {\n    font-weight: 700;\n    border-color: var(--SmartThemeQuoteColor, rgba(140, 190, 255, .85));\n    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8cbeff) 22%, transparent);\n    color: var(--SmartThemeBodyColor, #eee);\n}\n.wbm-edit-save:hover {\n    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8cbeff) 38%, transparent);\n    filter: none;\n}\n/* 字段级「取消 / 保存」：贴着被解锁的那个字段放 */\n.wbm-field-bar {\n    display: inline-flex;\n    align-items: center;\n    gap: 4px;\n    margin-left: 6px;\n    vertical-align: middle;\n}\n.wbm-field-bar[hidden] { display: none !important; }\n/* 正在编辑的那个字段加一圈强调色，别让人找不到 */\n.wbm-field-editing {\n    outline: 1px solid var(--SmartThemeQuoteColor, rgba(140, 190, 255, .8));\n    outline-offset: 1px;\n}\ntextarea.wbm-content-locked { cursor: pointer; }\ntextarea.wbm-content-editing {\n    outline: 1px solid var(--SmartThemeQuoteColor, rgba(120, 190, 255, .8));\n    outline-offset: 1px;\n}\n\n/* ---- 条目防误触锁：下拉/复选/关键词点不动，双击条目进编辑态 ---- */\n.wbm-inert {\n    pointer-events: none !important;\n}\n/* 被 select2 包一层的下拉（关键词、触发策略等）：锁住时连它那一层也点不动 */\n.world_entry[data-wbm-locked=\"1\"] .select2-container,\n.world_entry[data-wbm-locked=\"1\"] .select2-selection {\n    pointer-events: none !important;\n}\n.wbm-field-locked {\n    cursor: pointer;\n}\n/* 编辑态的条目：整块加一圈淡淡的强调色，让人一眼知道\"现在这条可以改\" */\n.world_entry[data-wbm-editing=\"1\"] {\n    outline: 1px solid var(--SmartThemeQuoteColor, rgba(120, 190, 255, .55));\n    outline-offset: -1px;\n}\n.wbm-edit-bar {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    margin-right: 6px;\n}\n.wbm-edit-bar[hidden] { display: none !important; }\n/* 顶栏上的开关图标 */\n#wbm-lock-toggle {\n    cursor: pointer;\n}\n#wbm-lock-toggle.wbm-lock-on {\n    color: var(--SmartThemeQuoteColor, #7cc0ff);\n}\n\n/* ================= 消息编辑：右下角再挂一排原生按钮 ================= */\n\n/* 顶部那排（.mes_edit_buttons）原样保留，不动它。这里说的是编辑期间由 index.js\n   克隆到消息右下角的第二排（#wbm-bottom-editrow）：长消息点完铅笔不用再往上翻。\n   克隆体用的还是酒馆原生的类名（.mes_edit_done 等），所以配色、点击行为全部照旧，\n   下面只是把它摆到 .mes 的右下角，并按宿主原排的尺寸把外面那层容器量出来。 */\n#wbm-bottom-editrow {\n    position: absolute;\n    right: 8px;\n    bottom: 6px;\n    left: auto;\n    top: auto;\n    display: inline-flex;\n    flex-direction: row;\n    align-items: center;\n    gap: 5px;\n    padding: 0;\n    margin: 0;\n    z-index: 50;\n}\n\n/* 尺寸与透明度对齐宿主原生那排（.mes_edit_buttons .menu_button 的同一套数值），\n   落在容器外时宿主的规则选不到，这里补一份，避免克隆出来的按钮比上面那排更大更亮 */\n#wbm-bottom-editrow .menu_button {\n    opacity: 0.5;\n    padding: 0;\n    margin: 0;\n    font-size: 1rem;\n    height: 2rem;\n    aspect-ratio: 1 / 1;\n    display: flex;\n    justify-content: center;\n    align-items: center;\n    cursor: pointer;\n}\n\n#wbm-bottom-editrow .menu_button:hover {\n    opacity: 1;\n}\n\n/* 把正在编辑的正文顶起来，给下面那排按钮腾出位置：最后一行不会被按钮压住。\n   条件写成「这条消息里确实有那排克隆按钮」——关掉开关或总开关后按钮不生成，\n   这里也就不会白白多出一段空白。 */\n.mes:has(> #wbm-bottom-editrow) > .mes_block > .mes_text {\n    padding-bottom: calc(2rem + 14px);\n}\n\n/* 编辑期间让开这条消息的左右滑档箭头与滑档计数：它们也钉在消息右下角，\n   z-index(9999) 比按钮高，留着的下场是挡住最右边的取消键。只在有那排按钮时生效。 */\n.mes:has(> #wbm-bottom-editrow) > .swipeRightBlock,\n.mes:has(> #wbm-bottom-editrow) > .swipe_left,\n.mes:has(> #wbm-bottom-editrow) > .swipe_right {\n    display: none !important;\n}\n\n/* 页码被我们接管后钉在气泡正中下方（不再是 .swipeRightBlock 的孩子），上面那条选不到它，\n   它会和右下角那排按钮同一水平线、手机上图标直接叠在一起。编辑期间这条消息的页码一并让位；\n   .wbm-editing 是老 WebView 不认 :has() 时的兜底（由 main.js 的 syncBottomRow 加/删）。 */\n.mes:has(> #wbm-bottom-editrow) > .swipes-counter,\n.mes:has(> #wbm-bottom-editrow) .swipes-counter,\n.mes.wbm-editing .swipes-counter {\n    display: none !important;\n}\n\n/* ================= 扩展设置抽屉 ================= */\n\n/* 分组小标题：用主题引色，换主题时跟着变 */\n#wbm-settings .wbm-opt-group {\n    margin: 16px 0 8px;\n    padding-top: 10px;\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .15));\n}\n\n#wbm-settings .wbm-opt-group > b {\n    color: var(--SmartThemeQuoteColor, inherit);\n    font-size: .95em;\n    letter-spacing: .3px;\n}\n\n/* 每个开关做成一张小卡片：左边一条主题色强调线 + 很淡的主题底色 + 卡与卡之间留白。\n   换主题时强调线与底色都跟着变（color-mix 前面垫 rgba 兜底，老浏览器也有底线）。 */\n#wbm-settings .wbm-opt-label {\n    display: flex;\n    align-items: flex-start;\n    gap: 8px;\n    margin: 0 0 10px;\n    padding: 8px 10px 9px;\n    border-left: 3px solid var(--SmartThemeQuoteColor, rgba(128, 128, 128, .6));\n    border-radius: 6px;\n    /* 底色取自正文色：深色主题是提亮、浅色主题是压暗，两边都看得出\"这是一张卡\"。\n       先写 rgba 兜底，再用 color-mix 跟主题走。 */\n    background: rgba(255, 255, 255, .05);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, rgba(255, 255, 255, .9)) 9%, transparent);\n}\n\n#wbm-settings .wbm-opt-label:hover {\n    background: rgba(255, 255, 255, .09);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, rgba(255, 255, 255, .9)) 15%, transparent);\n}\n\n/* 说明文字：放进开关的 label 里、和标题同一列，这样无论主题把复选框画多大，\n   说明都从标题的左边开始，不会吊在复选框底下 */\n#wbm-settings .wbm-opt-text {\n    display: flex;\n    flex-direction: column;\n    gap: 4px;\n    min-width: 0;\n}\n\n#wbm-settings .wbm-opt-title {\n    line-height: 1.4;\n}\n\n#wbm-settings .wbm-opt-note {\n    font-size: .85em;\n    line-height: 1.5;\n    opacity: .8;\n}\n\n/* 总开关关着时，下面几项就地变淡，提示\"现在没在生效\"，但仍然可以预先设置 */\n#wbm-settings .inline-drawer-content[data-wbm-idle=\"1\"] .wbm-opt-group,\n#wbm-settings .inline-drawer-content[data-wbm-idle=\"1\"] .wbm-opt-label {\n    opacity: .55;\n}\n\n#wbm-settings .inline-drawer-content[data-wbm-idle=\"1\"] #wbm-opt-enhance {\n    opacity: 1;\n}\n\n/* ================= 手机端：把世界书面板那几排控件压紧 ================= */\n\n/* 目标：不缩小按键（手指要能点中），只把\"折行\"消掉。\n   具体是——搜索区压成两排、世界书选择那排拆成\"选书 / 动书\"两排、\n   批量整理与筛选条各自横向滚动，不再折成三四行。\n   命中条件与上面两处相同：窄屏 / 短边矮（横屏手机）/ 触屏平板。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    /* 搜索行：按实际宽度自然换行（不强行单行，否则尾部控件会被挤出屏幕外够不到）：\n       搜索框自己占一行，三枚范围键 + 排序挤在下一行，仍然是两行。 */\n    .wbm-scope-row {\n        flex-wrap: wrap;\n        align-items: center;\n        gap: 5px;\n    }\n    .wbm-scope-row .wbm-search-scope {\n        flex-wrap: nowrap;\n        flex: 0 1 auto;\n    }\n    .wbm-scope-row #world_info_search {\n        flex: 1 1 100%;\n        min-width: 4.5em;\n        order: 1;\n    }\n    .wbm-scope-row .wbm-search-scope { order: 2; }\n    .wbm-scope-row #world_info_sort_order {\n        flex: 1 1 auto;\n        width: auto;\n        max-width: none;\n        min-width: 5.5em;\n        order: 3;\n    }\n    /* 范围键放大到手指能点中（原来 20px 太矮），但仍排在同一行 */\n    .wbm-scope-row .wbm-chip-sm {\n        height: 28px;\n        padding: 0 8px;\n        font-size: 12px;\n    }\n\n    /* ---------- 世界书选择那一排：拆成两排 ---------- */\n    /* 第一排（挑一本书）：创建 · or · 选择以编辑 · 世界书分类\n       第二排（动这本书）：导入 · 导出 · 重命名 · 复制 · 删除 —— 五等分占满 */\n    .wbm-world-row {\n        flex-wrap: wrap;\n        align-items: center;\n        gap: 6px;\n    }\n    .wbm-world-row .wbm-rowbreak {\n        display: block;\n        flex: 0 0 100%;\n        width: 100%;\n        height: 0;\n        margin: 0;\n        padding: 0;\n        border: 0;\n    }\n    .wbm-world-row #world_create_button,\n    .wbm-world-row > small {\n        flex: 0 0 auto;\n    }\n    .wbm-world-row #world_create_button { height: 34px; }\n    /* 书名再长也不许把右边那枚分类图标挤走：\n       basis 取 0（不是 auto）——auto 会先按内容宽度撑开，长书名就把兄弟挤出行外；\n       min-width 归零 + overflow 兜底，按钮内部自己省略号截断。 */\n    .wbm-world-row .wbm-editor-wrap {\n        flex: 1 1 0;\n        min-width: 0;\n        max-width: 100%;\n        overflow: hidden;\n    }\n    .wbm-world-row .wbm-editor-btn {\n        display: block;\n        width: 100%;\n        min-width: 0;\n        max-width: 100%;\n        box-sizing: border-box;\n        white-space: nowrap;\n        overflow: hidden;\n        text-overflow: ellipsis;\n    }\n    .wbm-world-row .wbm-cat-btn {\n        flex: 0 0 34px;\n        width: 34px;\n        height: 34px;\n    }\n    .wbm-world-row #world_import_button,\n    .wbm-world-row #world_popup_export,\n    .wbm-world-row #world_popup_name_button,\n    .wbm-world-row #world_duplicate,\n    .wbm-world-row #world_popup_delete {\n        flex: 1 1 0;\n        min-width: 34px;\n        max-width: none;\n        height: 34px;\n        margin: 0 !important;\n        padding: 0;\n        display: inline-flex;\n        align-items: center;\n        justify-content: center;\n        font-size: 15px;\n        line-height: 1;\n    }\n\n    /* ---------- 横滑条：留一条 3px 细滚动条，滑得动看得出来 ---------- */\n    /* 批量整理 / 检查记录：一行，横向滚动，不再折行 */\n    .wbm-batch-bar {\n        flex-wrap: nowrap;\n        justify-content: flex-start;\n        overflow-x: auto;\n        overflow-y: hidden;\n        padding-bottom: 5px;\n        scrollbar-width: thin;\n        scrollbar-color: var(--SmartThemeQuoteColor, rgba(170, 170, 170, .6)) transparent;\n        /* 滚到边上别把整页带着动 */\n        overscroll-behavior-x: contain;\n    }\n    .wbm-batch-bar .wbm-tool-group {\n        flex: 0 0 auto;\n        flex-wrap: nowrap;\n    }\n\n    /* 条目筛选条同理：一行横向滚动 */\n    .wbm-entry-favbar {\n        flex-wrap: nowrap;\n        overflow-x: auto;\n        overflow-y: hidden;\n        padding-bottom: 5px;\n        scrollbar-width: thin;\n        scrollbar-color: var(--SmartThemeQuoteColor, rgba(170, 170, 170, .6)) transparent;\n        overscroll-behavior-x: contain;\n    }\n    .wbm-entry-favbar .wbm-chip,\n    .wbm-entry-favbar .menu_button {\n        flex: 0 0 auto;\n    }\n\n    /* 已启用列表头顶的 ★收藏 / 收藏置顶 同理 */\n    .wbm-favbar {\n        flex-wrap: nowrap;\n        overflow-x: auto;\n        overflow-y: hidden;\n        padding-bottom: 3px;\n        scrollbar-width: thin;\n        scrollbar-color: var(--SmartThemeQuoteColor, rgba(170, 170, 170, .6)) transparent;\n        overscroll-behavior-x: contain;\n    }\n\n    /* WebKit 的细滚动条（上面 scrollbar-width 对 Chrome 已生效，这里统一大小与取色） */\n    .wbm-batch-bar::-webkit-scrollbar,\n    .wbm-entry-favbar::-webkit-scrollbar,\n    .wbm-favbar::-webkit-scrollbar {\n        height: 3px;\n        background: transparent;\n    }\n    .wbm-batch-bar::-webkit-scrollbar-track,\n    .wbm-entry-favbar::-webkit-scrollbar-track,\n    .wbm-favbar::-webkit-scrollbar-track { background: transparent; }\n    .wbm-batch-bar::-webkit-scrollbar-thumb,\n    .wbm-entry-favbar::-webkit-scrollbar-thumb,\n    .wbm-favbar::-webkit-scrollbar-thumb {\n        border-radius: 2px;\n        background: var(--SmartThemeQuoteColor, rgba(170, 170, 170, .6));\n    }\n\n    /* 按键别缩得太小：手机上一律不低于 30px 高 */\n    #wbm-list .wbm-chip,\n    .wbm-entry-favbar .wbm-chip {\n        height: 30px;\n        font-size: 12px;\n        padding: 0 11px;\n    }\n\n    /* 「选择以编辑」按钮允许被压缩，避免把宿主那排图标挤到下一行 */\n    .wbm-editor-wrap { min-width: 0; }\n    .wbm-editor-btn { min-width: 0; }\n\n}\n\n/* 够宽（600px 以上：横屏手机、平板、电脑）：搜索区挤回一行，把高度还给条目列表。\n   手机竖屏（390 那档）不命中，那边仍然是\"搜索框独占一排 + 键与排序一排\"。 */\n@media (min-width: 600px) {\n    .wbm-scope-row #world_info_search {\n        flex: 1 1 6em;\n        min-width: 4em;\n    }\n    .wbm-scope-row .wbm-search-scope {\n        flex: 0 0 auto;\n        flex-wrap: nowrap;\n    }\n    .wbm-scope-row #world_info_sort_order {\n        flex: 0 0 auto;\n        width: 8.5em;\n        max-width: 8.5em;\n        min-width: 0;\n    }\n}\n\n/* ================= 备选回复页码接管 =================\n    目标：页码固定在消息气泡下方正中，手机上也要点得中。\n    原则：只动 .swipes-counter 这一个盒子，.swipe_right / .swipe_left 一根手指都不碰——\n    所以把箭头换成小兔子之类的美化照旧生效；地方不够时宁可让箭头压住页码，\n    也绝不把箭头挤开（master 2026-10-20 定的）。\n    2026-10-20 master 复测：左边/下面两档显示都错位，砍掉，只保留中间。 */\n\nbody.wbm-swipe-on #chat .mes .swipes-counter {\n    font-size: 14px !important;\n    line-height: 1.3 !important;\n    min-width: 46px !important;\n    height: auto !important;\n    padding: 3px 10px !important;\n    margin: 0 !important;\n    border-radius: 999px;\n    opacity: .55 !important;\n    pointer-events: auto !important;\n    transition: opacity .15s ease, background-color .15s ease;\n}\n\nbody.wbm-swipe-on #chat .mes .swipes-counter:hover,\nbody.wbm-swipe-on #chat .mes .swipes-counter:focus-visible {\n    opacity: .95 !important;\n    background-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 12%, transparent) !important;\n}\n\n/* 页码搬进 .mes 绝对居中，消息底部补一条等高空行（学双色盒子的做法） */\nbody.wbm-swipe-on #chat .mes {\n    position: relative;\n    padding-bottom: 26px !important;\n}\n\nbody.wbm-swipe-on #chat .mes .swipes-counter {\n    position: absolute !important;\n    left: 50% !important;\n    right: auto !important;\n    top: auto !important;\n    bottom: 3px !important;\n    transform: translateX(-50%) !important;\n    align-self: auto !important;\n    order: 0 !important;\n}\n\n/* 手机：字再大一号、点击区撑到 44pt 上下，但视觉上仍然只是一个数字 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    body.wbm-swipe-on #chat .mes .swipes-counter {\n        font-size: 15px !important;\n        min-width: 60px !important;\n        padding: 7px 14px !important;\n        bottom: 4px !important;\n    }\n\n    body.wbm-swipe-on #chat .mes {\n        padding-bottom: 36px !important;\n    }\n}\n\n/* 备选回复弹窗标题栏里的「批量删除」（三栏网格：标题左 / 按钮中 / 关闭右上）\n   以前用绝对定位居中，按钮比标题栏高，下沿压在了弹窗的分隔线上（master 2026-10-20 报的）。 */\n.wbm-swipe-header {\n    display: grid !important;\n    grid-template-columns: 1fr auto 1fr;\n    align-items: center;\n    column-gap: 8px;\n    padding: 6px 0 10px !important;\n    min-height: 44px;\n    row-gap: 0;\n}\n\n.wbm-swipe-header > h3,\n.wbm-swipe-header > .swipe_picker_title {\n    grid-column: 1;\n    justify-self: start;\n    margin: 0 !important;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-swipe-header .wbm-swipe-bulk {\n    grid-column: 2;\n    justify-self: center;\n}\n\n.wbm-swipe-header .wbm-swipe-right {\n    grid-column: 3;\n    justify-self: end;\n    display: inline-flex;\n    align-items: center;\n    gap: 10px;\n    min-width: 0;\n}\n\n.wbm-swipe-header .wbm-swipe-right .popup-button-close {\n    margin-left: 0 !important;\n}\n\n.wbm-swipe-header .wbm-swipe-tool {\n    cursor: pointer;\n    user-select: none;\n    padding: 2px 4px;\n    border-radius: 4px;\n    transition: background-color .12s ease, opacity .12s ease;\n}\n\n.wbm-swipe-header .wbm-swipe-tools {\n    display: inline-flex;\n    align-items: center;\n    gap: 12px;\n    flex: 0 0 auto;\n    white-space: nowrap;\n}\n\n.wbm-swipe-header .wbm-swipe-tool {\n    flex: 0 0 auto;\n    white-space: nowrap;\n}\n\n@media (max-width: 480px) {\n    .wbm-swipe-header .wbm-swipe-tools { gap: 10px; }\n    .wbm-swipe-header .wbm-swipe-right { gap: 8px; }\n}\n\n.wbm-swipe-header .wbm-swipe-tool:hover {\n    opacity: 1;\n    background-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 14%, transparent);\n}\n\n.wbm-swipe-bulk {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    flex: 0 0 auto;\n    padding: 5px 12px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .18));\n    border-radius: 8px;\n    font-size: 13px;\n    line-height: 1.2;\n    opacity: .8;\n    cursor: pointer;\n    user-select: none;\n    white-space: nowrap;\n    transition: opacity .15s ease, border-color .15s ease, background-color .15s ease;\n}\n\n.wbm-swipe-bulk:hover {\n    opacity: 1;\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n}\n\n.wbm-swipe-bulk.armed {\n    opacity: 1;\n    border-color: var(--SmartThemeEmColor, #d6747b);\n    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #d6747b) 14%, transparent);\n}\n\n.wbm-swipe-bulk.wbm-busy {\n    opacity: .6;\n    pointer-events: none;\n}\n\n/* 选择模式：每条备选左侧一个勾选圈，点条目本身＝勾选，不再切换正文 */\n.wbm-swipe-pick {\n    flex: 0 0 auto;\n    align-self: center;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 22px;\n    height: 22px;\n    margin-right: 6px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .35));\n    border-radius: 50%;\n    opacity: .7;\n    transition: opacity .12s ease, background-color .12s ease, border-color .12s ease;\n}\n\n.wbm-swipe-pick i {\n    font-size: 11px;\n    opacity: 0;\n    transition: opacity .12s ease;\n}\n\n.wbm-swipe-pick.checked {\n    opacity: 1;\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 26%, transparent);\n}\n\n.wbm-swipe-pick.checked i {\n    opacity: 1;\n}\n\n.swipe_picker_block.wbm-select-on {\n    cursor: pointer;\n}\n\n.swipe_picker_block.wbm-picked {\n    box-shadow: inset 3px 0 0 var(--SmartThemeEmColor, #9c7bd6);\n}\n\n/* 页码轻触反馈：点到了就能看出来，不用等弹窗 */\n.swipes-counter.wbm-tap-flash {\n    opacity: 1 !important;\n    background-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ffffff) 22%, transparent) !important;\n}\n\n/* 分类面板：勾选框外面那层，44px 命中区（手机点得中） */\n.wbm-cat-pick {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 44px;\n    height: 44px;\n    margin: -10px -8px -10px 0;\n    cursor: pointer;\n}\n\n/* ---------------- ② 对话补全预设：搜索按钮 ---------------- */\n#wbm-talk-preset-btn {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    gap: 4px;\n    height: 32px;\n    padding: 0 10px;\n    margin-left: 4px;\n    font-size: 13px;\n}\n#wbm-talk-preset-btn .wbm-talk-preset-btn-text { white-space: nowrap; }\n.wbm-talk-preset-row.active .wbm-picker-name { color: var(--SmartThemeQuoteColor, inherit); }\n.wbm-talk-preset-row .wbm-preset-tools { margin-left: auto; }\n\n/* 预设名太长时「分组 / 删除」不能被挤到第二行（master 2026-10-21 手机端报的）：\n   名字这一格吃掉余量并自己省略号，右侧工具固定宽度、永不换行。 */\n.wbm-talk-preset-row {\n    flex-wrap: nowrap !important;\n}\n\n.wbm-talk-preset-row .wbm-picker-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-talk-preset-row .wbm-preset-tools {\n    flex: 0 0 auto;\n    flex-wrap: nowrap;\n    gap: 10px;\n}\n\n.wbm-talk-preset-row .wbm-preset-tool {\n    flex: 0 0 auto;\n    white-space: nowrap;\n}\n\n.wbm-talk-preset-row .wbm-picker-count {\n    flex: 0 0 auto;\n    white-space: nowrap;\n}\n\n/* 分组标题兼折叠开关：点一下展开/收起，右侧是本组条数 */\n.wbm-picker-group-label.wbm-talk-group-toggle {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    cursor: pointer;\n    user-select: none;\n    min-height: 28px;\n}\n\n.wbm-picker-group-label.wbm-talk-group-toggle:hover {\n    color: var(--SmartThemeEmColor, inherit);\n}\n\n.wbm-picker-group-label.wbm-talk-group-toggle > i {\n    font-size: 11px;\n    opacity: .75;\n}\n\n.wbm-picker-group-label.wbm-talk-group-toggle > .wbm-talk-group-name {\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-picker-group-label.wbm-talk-group-toggle > .wbm-talk-group-count {\n    margin-left: auto;\n    font-family: ui-monospace, monospace;\n    font-size: 11px;\n    opacity: .55;\n}\n\n.wbm-talk-group-body[hidden] {\n    display: none !important;\n}\n\n/* 批量条：已选 N 个 | 全选 | 清空 | 分组 | 删除 | 退出\n   手机上也要能一行放下，所以字小一号、间距收紧，绝不换行。 */\n.wbm-talk-batchbar {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    flex-wrap: nowrap;\n    min-height: 32px;\n    padding: 2px 12px 6px;\n    white-space: nowrap;\n}\n\n.wbm-talk-batchbar[hidden] {\n    display: none !important;\n}\n\n.wbm-talk-batch-count {\n    flex: 0 0 auto;\n    font-family: ui-monospace, monospace;\n    font-size: 11px;\n    opacity: .7;\n    margin-right: auto;\n}\n\n.wbm-talk-batchbar .wbm-preset-tool {\n    flex: 0 0 auto;\n    white-space: nowrap;\n    font-size: 12px;\n    padding: 4px 10px;\n}\n\n.wbm-talk-batchbar .wbm-talk-batch-exit {\n    opacity: .8;\n}\n\n.wbm-talk-batch-grouprow[hidden] {\n    display: none !important;\n}\n\n@media (max-width: 480px) {\n    .wbm-talk-batchbar {\n        gap: 5px;\n        padding: 2px 8px 6px;\n    }\n\n    .wbm-talk-batch-count {\n        font-size: 10px;\n    }\n\n    .wbm-talk-batchbar .wbm-preset-tool {\n        font-size: 11px;\n        padding: 4px 6px;\n    }\n}\n\n/* 行内改名/分组那一排：输入框占余量，「确定 / 取消」不压缩。\n   原来两个键用 .wbm-picker-action（flex:1 1 0 + min-width:0），被 width:100% 的输入框挤成\n   14px 宽，「确定」「取消」两个字竖着排（master 2026-10-21 截图报的就是这个）。 */\n.wbm-picker-row .wbm-name-input-inline {\n    flex: 1 1 6em;\n    width: auto;\n    min-width: 0;\n}\n\n.wbm-picker-row .wbm-name-input-inline ~ .wbm-picker-action {\n    flex: 0 0 auto;\n    width: auto;\n    min-width: 56px;\n    padding: 0 12px;\n    white-space: nowrap;\n}\n\n/* 手机：行内改名那一排仍是一行，但把名字截短、输入框保底留够宽度。\n   一行塞四个东西时输入框原来只剩 49px，打字看不到自己输入了什么。 */\n@media (max-width: 760px), (max-width: 1100px) and (max-height: 520px), (max-width: 1100px) and (pointer: coarse) {\n    .wbm-picker-row .wbm-name-input-inline {\n        flex: 1 1 7em;\n        min-width: 7em;\n    }\n\n    .wbm-picker-row .wbm-name-input-inline ~ .wbm-picker-name,\n    .wbm-picker-row .wbm-picker-name:has(+ .wbm-name-input-inline) {\n        flex: 0 1 auto;\n        max-width: 84px;\n        overflow: hidden;\n        text-overflow: ellipsis;\n        white-space: nowrap;\n    }\n\n    .wbm-picker-row .wbm-name-input-inline ~ .wbm-picker-action {\n        min-width: 52px;\n        padding: 0 10px;\n    }\n}\n\n/* 两级插入窗口：步骤提示（第 1 步 / 第 2 步），以及隐藏的按钮不占位 */\n.wbm-picker-group-label.wbm-step-marker {\n    opacity: .6;\n    font-family: ui-monospace, monospace;\n    font-size: 11px;\n    letter-spacing: .02em;\n}\n\n.wbm-picker-actions > [hidden] {\n    display: none !important;\n}\n\n/* 关键：提示词管理器整块是 #ai_response_configuration（flex 行）里的 flex 子项，\n   默认 min-width:auto 会让它的 min-content 把抽屉撑到 700px 宽 —— 行尾的原生按钮就被\n   画到抽屉外面（压在对话区上），点击落到对话区 → 表现为「点不到开关/找不到排序键」。\n   这里把 min-width 链条全部放开，行内元素自己省略，宽度跟随抽屉。 */\n#completion_prompt_manager {\n    min-width: 0 !important;\n    width: 100% !important;\n    max-width: 100%;\n}\n#completion_prompt_manager .range-block,\n#completion_prompt_manager_list,\n#completion_prompt_manager_list li,\nli.completion_prompt_manager_prompt {\n    min-width: 0 !important;\n    max-width: 100%;\n    box-sizing: border-box;\n}\nli.completion_prompt_manager_prompt {\n    flex-wrap: nowrap;\n    overflow: hidden;\n}\nli.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {\n    min-width: 0 !important;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n.completion_prompt_manager_footer {\n    flex-wrap: wrap !important;\n    min-width: 0 !important;\n}\n\n/* 方案 A：每行一个「↓」，点它就是「把当前选中的那条插到这行之后」 */\n.wbm-prompt-bar {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    padding: 4px 6px;\n    min-width: 0;\n}\n\n.wbm-prompt-bar-hint {\n    flex: 1 1 auto;\n    min-width: 0;\n    font-size: 12px;\n    line-height: 1.3;\n    opacity: .7;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n/* 行内「↓」：默认半透明，悬停才亮，避免抢走原生按钮的注意力 */\n.prompt_manager_prompt_controls .wbm-pm-insert {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    padding: 2px 4px;\n    margin-right: 4px;\n    border-radius: 4px;\n    font-size: 12px;\n    opacity: .45;\n    cursor: pointer;\n}\n\n.prompt_manager_prompt_controls .wbm-pm-insert:hover {\n    opacity: 1;\n    color: var(--SmartThemeEmColor, #9c7bd6);\n}\n\n@media (max-width: 760px), (max-width: 1100px) and (pointer: coarse) {\n    .prompt_manager_prompt_controls .wbm-pm-insert {\n        padding: 8px 10px;\n        font-size: 14px;\n        opacity: .7;\n    }\n\n    .wbm-prompt-bar-hint {\n        font-size: 11px;\n    }\n}\n\n/* 提示词行的「↓」：行尾控件区最前（detach / edit / toggle 之前）。\n   默认半透明，行悬停时才醒目；行尾那几个是酒馆原生键，我们的键排在最前不贴边。 */\n#completion_prompt_manager_list .wbm-pm-insert {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 22px;\n    height: 22px;\n    margin: 0 4px 0 0;\n    border-radius: 5px;\n    font-size: 11px;\n    opacity: .35;\n    cursor: pointer;\n    transition: opacity .12s ease, background-color .12s ease, color .12s ease;\n}\n\n#completion_prompt_manager_list li:hover .wbm-pm-insert {\n    opacity: .9;\n}\n\n#completion_prompt_manager_list .wbm-pm-insert:hover {\n    opacity: 1;\n    color: var(--SmartThemeEmColor, #9c7bd6);\n    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 20%, transparent);\n}\n\n/* 没选中移动对象时：所有 ↓ 变灰、不可点 */\n/* 没选移动对象时：只压暗，不能变「点不动的死键」——点不动等于没反馈，\n   master 会判成「下箭头无法点击」。点它会 toast 提示并高亮底部下拉。 */\n#completion_prompt_manager_list .wbm-pm-insert.wbm-pm-insert-off {\n    opacity: .3;\n    cursor: help;\n}\n\n#completion_prompt_manager_list .wbm-pm-insert.wbm-pm-insert-off:hover {\n    opacity: .75;\n    color: var(--SmartThemeBodyColor, inherit);\n    background-color: transparent;\n}\n\n/* 底部下拉被提醒时闪一下，告诉用户「要在这里选条目」 */\n#completion_prompt_manager_footer_append_prompt.wbm-pm-attn {\n    outline: 2px solid var(--SmartThemeEmColor, #9c7bd6);\n    outline-offset: 1px;\n    animation: wbm-pm-attn 1.2s ease-out;\n}\n\n@keyframes wbm-pm-attn {\n    0% { background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 45%, transparent); }\n    100% { background-color: transparent; }\n}\n\n/* 拖拽把手：桌面端只有 ☰ 能拖，给它留够命中区并给出抓取手势 */\n#completion_prompt_manager_list li[data-pm-identifier] .drag-handle {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 26px;\n    margin-right: 2px;\n    cursor: grab;\n    user-select: none;\n}\n\n#completion_prompt_manager_list li[data-pm-identifier] .drag-handle:active {\n    cursor: grabbing;\n}\n\n/* 正在移动的那一条：左侧竖色条 + 淡底，和底部下拉里的名字对得上 */\n/* 移动中的那一行整条变色（master：标识不明显，直接让整个条目变色、随主题） */\n#completion_prompt_manager_list li.wbm-pm-moving {\n    box-shadow: inset 4px 0 0 var(--SmartThemeEmColor, #9c7bd6);\n    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 26%, transparent) !important;\n    outline: 1px solid color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 55%, transparent);\n    outline-offset: -1px;\n}\n#completion_prompt_manager_list li.wbm-pm-moving .prompt_manager_prompt_name,\n#completion_prompt_manager_list li.wbm-pm-moving .prompt_manager_prompt_name * {\n    color: var(--SmartThemeEmColor, #9c7bd6) !important;\n}\n\n/* 悬停预演：这一行下沿亮一条线，提示落点 */\n#completion_prompt_manager_list li.wbm-pm-hover {\n    box-shadow: inset 0 -2px 0 var(--SmartThemeEmColor, #9c7bd6);\n}\n\n/* 刚移动完成的那一条：闪一下再淡掉 */\n#completion_prompt_manager_list li.wbm-pm-flash {\n    animation: wbm-pm-flash 0.9s ease-out;\n}\n\n@keyframes wbm-pm-flash {\n    0% { background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 38%, transparent); }\n    100% { background-color: transparent; }\n}\n\n@media (max-width: 760px), (max-width: 1100px) and (pointer: coarse) {\n    #completion_prompt_manager_list .wbm-pm-insert {\n        width: 30px;\n        height: 30px;\n        font-size: 13px;\n        opacity: .6;\n    }\n}\n\n/* ---------------- ③ 提示词插入到指定位置 ---------------- */\n.wbm-prompt-insert-btn { flex: 0 0 auto; }\n.wbm-prompt-insert-btn::after { content: ''; }\n\n/* ---------------- ④ 提示词编辑弹窗：保存键常驻 ---------------- */\n.wbm-pm-sticky {\n    position: sticky;\n    bottom: 0;\n    z-index: 5;\n    display: flex;\n    align-items: center;\n    justify-content: flex-end;\n    gap: 8px;\n    flex-wrap: wrap;\n    padding: 8px 4px;\n    margin-top: 6px;\n    background: var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .96));\n    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .16));\n    box-shadow: 0 -6px 12px -8px var(--SmartThemeShadowColor, rgba(0, 0, 0, .6));\n}\n\n/* ================= 人设管理：分组 + 手机折叠 ================= */\n.wbm-persona-bar {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    flex-wrap: wrap;\n    margin-bottom: 8px;\n}\n\n.wbm-persona-chips {\n    display: flex;\n    gap: 6px;\n    flex-wrap: wrap;\n    flex: 1 1 auto;\n    min-width: 0;\n}\n\n.wbm-persona-hint {\n    font-family: ui-monospace, monospace;\n    font-size: 11px;\n    opacity: .6;\n    margin-left: auto;\n}\n\n.wbm-persona-tag {\n    display: inline-block;\n    margin-top: 2px;\n    padding: 1px 6px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor);\n    font-size: 10px;\n    line-height: 14px;\n    max-width: 100%;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    opacity: .8;\n}\n\n.wbm-persona-collapse {\n    display: inline-flex;\n    width: 100%;\n    justify-content: center;\n    margin-bottom: 8px;\n}\n\n.persona_management_left_column.wbm-collapsed {\n    flex: 0 0 auto;\n}\n\n/* 手机收起人设列表时，我们那排筛选胶囊与「分组…」要留着——\n   否则想按组筛选、想打开分组浮层，连入口都被一起收走了（master 2026-10-21 报「点开分组浮层就卡住」，手机端连点开都做不到）。 */\n.persona_management_left_column.wbm-collapsed > *:not(#wbm-persona-collapse):not(#wbm-persona-bar) {\n    display: none !important;\n}\n\n.persona_management_left_column.wbm-collapsed > #wbm-persona-bar {\n    display: flex !important;\n}\n\n.wbm-persona-row {\n    flex-wrap: wrap;\n    row-gap: 6px;\n}\n\n.wbm-persona-row .wbm-picker-line {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    width: 100%;\n    min-width: 0;\n}\n\n.wbm-persona-row .wbm-picker-name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n/* ---------------- 人设分组浮层（2026-10-21） ---------------- */\n/* 标题行：左边标题、右边「关闭」，任何状态下都能退出 */\n.wbm-picker-titlerow {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    padding: 2px 12px 6px;\n}\n\n.wbm-picker-titlerow .wbm-picker-title {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n.wbm-picker-close {\n    flex: 0 0 auto;\n    padding: 5px 14px;\n    min-height: 32px;\n    border-radius: 999px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .45));\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    font-family: inherit;\n    font-size: 13px;\n    line-height: 1.2;\n    cursor: pointer;\n}\n\n.wbm-picker-close:hover {\n    border-color: var(--SmartThemeEmColor, rgba(156, 123, 214, .8));\n}\n\n.wbm-persona-row .wbm-picker-line { cursor: pointer; }\n\n/* 组名输入行：输入框占余量、两个键不压缩（原来输入框 width:100% 把「确定/取消」挤成竖排） */\n.wbm-preset-saverow .wbm-name-input-inline {\n    flex: 1 1 8em;\n    width: auto;\n    min-width: 0;\n}\n\n.wbm-preset-saverow .wbm-preset-tool {\n    flex: 0 0 auto;\n    white-space: nowrap;\n    padding: 5px 14px;\n    min-height: 30px;\n    font-size: 13px;\n}\n\n/* ---- 提示词管理器：把手显示规则（1.3.14，按 TT 酒馆的行为对齐） ----\n   TT 的 promptmanager.css 只在把手真正生效时才显示 ☰；电脑端整行可拖，所以不显示。\n   这里用同样的规则：细指针（鼠标）隐藏装饰性把手，粗指针（触屏）显示并和星号拉开距离。 */\n@media (pointer: fine) {\n    #completion_prompt_manager_list .drag-handle,\n    .completion_prompt_manager_prompt > .drag-handle {\n        display: none !important;\n    }\n}\n\n@media (pointer: coarse) {\n    #completion_prompt_manager_list .drag-handle,\n    .completion_prompt_manager_prompt > .drag-handle {\n        padding: 2px 10px 2px 2px;\n        margin-right: 8px;\n        opacity: 0.8;\n        cursor: grab;\n    }\n\n    #completion_prompt_manager_list .drag-handle:active,\n    .completion_prompt_manager_prompt > .drag-handle:active {\n        cursor: grabbing;\n    }\n}\n\n/* 提示词管理器底部的版本标记：用来确认页面跑的是哪一版（排查缓存用） */\n.wbm-pm-ver {\n    margin-left: auto;\n    font-family: ui-monospace, monospace;\n    font-size: 10px;\n    opacity: .45;\n    white-space: nowrap;\n}\n/* ================= 排序状态（1.3.18） ================= */\n#completion_prompt_manager_list.wbm-sorting li .prompt_manager_prompt_controls {\n    display: none !important;\n}\n\n#completion_prompt_manager_list.wbm-sorting .drag-handle {\n    display: inline-flex !important;\n    align-items: center;\n    justify-content: center;\n    width: 26px;\n    margin-right: 2px;\n    opacity: .8;\n    cursor: grab;\n    user-select: none;\n}\n\n#completion_prompt_manager_list .wbm-pm-seq {\n    flex: 0 0 auto;\n    min-width: 1.7em;\n    text-align: right;\n    font-family: ui-monospace, monospace;\n    font-size: 11px;\n    opacity: .6;\n    margin-right: 6px;\n}\n\n#completion_prompt_manager_list .wbm-pm-box {\n    flex: 0 0 auto;\n    position: relative;\n    width: 18px;\n    height: 18px;\n    border-radius: 5px;\n    border: 2px solid var(--SmartThemeBorderColor, rgba(170, 170, 170, .9));\n    box-sizing: border-box;\n    margin-right: 5px;\n    cursor: pointer;\n}\n\n#completion_prompt_manager_list .wbm-pm-box.on {\n    border-color: var(--SmartThemeQuoteColor, #d4b06a);\n    background: var(--SmartThemeQuoteColor, #d4b06a);\n}\n\n#completion_prompt_manager_list .wbm-pm-box.on::after {\n    content: '';\n    position: absolute;\n    left: 50%;\n    top: 50%;\n    width: 5px;\n    height: 9px;\n    border: solid var(--SmartThemeBlurTintColor, #1c1c26);\n    border-width: 0 2px 2px 0;\n    box-sizing: border-box;\n    transform: translate(-50%, -58%) rotate(42deg);\n}\n\n#completion_prompt_manager_list li.wbm-pm-picked {\n    background-color: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 18%, transparent) !important;\n}\n\n#completion_prompt_manager_list .wbm-pm-insert.wbm-pm-arrow-off {\n    opacity: .25;\n    cursor: help;\n}\n\n#completion_prompt_manager_list.wbm-sorting li .wbm-pm-insert {\n    width: 22px;\n    height: 22px;\n    margin-right: 6px;\n    opacity: .5;\n}\n\n#completion_prompt_manager_list.wbm-sorting li:hover .wbm-pm-insert {\n    opacity: 1;\n}\n\n.wbm-prompt-sortbtn {\n    flex: 0 0 auto;\n    padding: 4px 12px;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));\n    background: transparent;\n    color: inherit;\n    font-family: inherit;\n    font-size: 12px;\n    line-height: 1.2;\n    cursor: pointer;\n    white-space: nowrap;\n}\n\n.wbm-prompt-sortbtn:hover {\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n    color: var(--SmartThemeEmColor, #9c7bd6);\n}\n\n/* ================= 排序态排版（1.3.19） =================\n   排序态只留「序号 · 勾选 · ☰ · ↓ · 名字 · token」，行内一律单行、名字省略。 */\n#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] {\n    display: flex;\n    align-items: center;\n    gap: 2px;\n    padding: 4px 8px 4px 2px;\n    min-height: 34px;\n    box-sizing: border-box;\n}\n\n#completion_prompt_manager_list.wbm-sorting li .wbm-pm-seq {\n    min-width: 1.5em;\n    margin: 0 2px 0 0;\n    font-size: 11px;\n    line-height: 1;\n}\n\n#completion_prompt_manager_list.wbm-sorting li .wbm-pm-box {\n    width: 16px;\n    height: 16px;\n    margin: 0 4px 0 2px;\n}\n\n#completion_prompt_manager_list.wbm-sorting li .drag-handle {\n    width: 20px;\n    margin: 0 2px 0 0;\n}\n\n#completion_prompt_manager_list.wbm-sorting li .wbm-pm-insert {\n    width: 18px;\n    height: 22px;\n    margin: 0 4px 0 0;\n}\n\n#completion_prompt_manager_list.wbm-sorting li .completion_prompt_manager_prompt_name,\n#completion_prompt_manager_list.wbm-sorting li .prompt_manager_prompt_name {\n    flex: 1 1 auto;\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n\n#completion_prompt_manager_list.wbm-sorting li .completion_prompt_manager_prompt_tokens,\n#completion_prompt_manager_list.wbm-sorting li .prompt_manager_prompt_tokens,\n#completion_prompt_manager_list.wbm-sorting li > span:last-child {\n    flex: 0 0 auto;\n    padding-left: 6px;\n    opacity: .45;\n    white-space: nowrap;\n}\n\n/* ================= 排序态视觉顺序（1.3.21） =================\n   宿主把每一行设成 `display: grid; grid-template-columns: 4fr 80px 45px`（css/promptmanager.css:20），\n   ☰ 又是 position:absolute —— 所以我们只写 li{display:flex} 是压不住的（网格优先级更高），\n   表现就是名字换行、星号和 ☰ 叠在一起。这里用同样的 id 链 + !important 才真正接管。 */\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] {\n    display: flex !important;\n    flex-wrap: nowrap !important;\n    align-items: center !important;\n    grid-template-columns: none !important;\n    gap: 4px !important;\n    padding: 5px 8px !important;\n    min-height: 40px;\n    box-sizing: border-box;\n    overflow: hidden;\n}\n\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-seq {\n    order: -5;\n    flex: 0 0 auto !important;\n    min-width: 1.4em;\n    margin: 0 !important;\n    text-align: right;\n    font-size: 11px;\n    line-height: 1;\n}\n\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-box {\n    order: -4;\n    flex: 0 0 auto !important;\n    width: 16px !important;\n    height: 16px !important;\n    margin: 0 2px 0 0 !important;\n}\n\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {\n    order: -3;\n    position: static !important;\n    top: auto !important;\n    height: auto !important;\n    width: 16px !important;\n    min-width: 16px !important;\n    padding: 0 !important;\n    margin: 0 !important;\n    display: inline-flex !important;\n    align-items: center;\n    justify-content: center;\n    font-size: 13px;\n    line-height: 1;\n    opacity: .75;\n    cursor: grab;\n}\n\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-insert {\n    order: -2;\n    flex: 0 0 auto !important;\n    width: 18px !important;\n    height: 22px !important;\n    margin: 0 2px 0 0 !important;\n}\n\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .completion_prompt_manager_prompt_name {\n    order: 1;\n    flex: 1 1 auto !important;\n    min-width: 0;\n    display: flex !important;\n    align-items: center;\n    gap: 2px;\n    overflow: hidden;\n    white-space: nowrap !important;\n    line-height: 1.3;\n}\n\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .completion_prompt_manager_prompt_name > a {\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    min-width: 0;\n}\n\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > span:not(.drag-handle):not(.wbm-pm-seq):not(.wbm-pm-box):not(.wbm-pm-insert):not(.completion_prompt_manager_prompt_name) {\n    order: 2;\n    flex: 0 0 auto !important;\n}\n\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .prompt_manager_prompt_tokens {\n    order: 3;\n    flex: 0 0 auto !important;\n    padding-left: 6px;\n    opacity: .5;\n}\n\n/* ================= 1.3.22：星号不吃指针、触屏不显示拖拽把手 ================= */\n#completion_prompt_manager_list .completion_prompt_manager_prompt_name .fa-solid.fa-asterisk,\n#completion_prompt_manager_list .completion_prompt_manager_prompt_name .fa-solid.fa-asterisk * {\n    pointer-events: none !important;\n}\n\n@media (pointer: coarse) {\n    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {\n        display: none !important;\n    }\n}\n\n/* 触屏（手机/平板）不提供拖拽：☰ 直接不画。排序用勾选 + ↓。 */\n@media (pointer: coarse) {\n    #completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle,\n    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {\n        display: none !important;\n    }\n}\n\n/* ================= 1.3.24：拖拽整体下线 + 顶部常驻工具条 + 每行 ↑↓ 微调 ================= */\n/* ☰ 不再出现（手机、电脑、排序态都一样） */\n#completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle,\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {\n    display: none !important;\n}\n\n/* 工具条常驻在提示词管理器顶部，滚到列表中间也看得到 */\n#completion_prompt_manager > .wbm-prompt-bar {\n    position: sticky;\n    top: 0;\n    z-index: 7;\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    flex-wrap: wrap;\n    margin: 0 0 6px;\n    padding: 7px 4px;\n    background: var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .96));\n    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .12));\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-bar-hint {\n    flex: 1 1 12em;\n    min-width: 0;\n}\n\n/* 每行 ↑↓：一对小键，紧挨行尾控件区，默认低调、悬停变亮 */\n#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step {\n    display: inline-flex;\n    align-items: center;\n    gap: 2px;\n    margin-right: 6px;\n    flex: 0 0 auto;\n}\n#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > * {\n    width: 22px;\n    height: 22px;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    border-radius: 6px;\n    font-size: 12px;\n    opacity: .5;\n    cursor: pointer;\n    color: var(--SmartThemeBodyColor, #e6e6e6);\n}\n#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > *:hover {\n    opacity: 1;\n    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 24%, transparent);\n}\n\n/* 排序态：鼠标移上去时不要丢掉行框（master：「选项高亮时，选项框会消失」） */\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier]:hover {\n    background-color: color-mix(in srgb, var(--SmartThemeBorderColor, #ffffff) 10%, transparent);\n    outline: 1px solid color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 40%, transparent);\n    outline-offset: -1px;\n}\n\n/* 酒馆原生那句「单击滑块以手动输入值。」常驻在 AI 面板顶端，盖在内容上；这里收掉 */\n#left-nav-panel #clickSlidersTips {\n    display: none !important;\n}\n\n/* ================= 1.3.26：↑↓ 收进行尾控件区（不再占第二行）+ 排序态隐藏 ================= */\n#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step {\n    display: inline-flex;\n    align-items: center;\n    gap: 0;\n    margin: 0 4px 0 0;\n    padding: 0;\n    flex: 0 0 auto;\n    line-height: 1;\n}\n#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > * {\n    width: 18px;\n    height: 18px;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    border-radius: 4px;\n    font-size: 10px;\n    opacity: .55;\n    cursor: pointer;\n    color: var(--SmartThemeBodyColor, #e6e6e6);\n    margin: 0;\n}\n#completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > *:hover {\n    opacity: 1;\n    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 22%, transparent);\n}\n\n/* 1.3.33：排序态要显示 ↑↓（顶替 Token 数字），旧的隐藏规则已删除。 */\n\n/* 工具条：没有说明文字，按钮靠右排一行 */\n#completion_prompt_manager > .wbm-prompt-bar {\n    gap: 8px;\n    padding: 6px 4px;\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-bar-hint {\n    display: none !important;\n}\n\n\n/* ================= 1.3.32：底栏回到「上一版」观感 + 排序态 token↔↑↓ 换位 ================= */\n#completion_prompt_manager > .wbm-prompt-bar {\n    gap: 10px;\n    padding: 8px 6px;\n    margin: 0 0 8px;\n    background: var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .96));\n    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, .12));\n    justify-content: flex-end;\n    flex-wrap: nowrap;\n}\n\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-count {\n    margin-right: auto;\n    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n    font-size: 11px;\n    opacity: .6;\n    white-space: nowrap;\n}\n\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-sortbtn {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 30px;\n    height: 28px;\n    padding: 0;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    font-size: 13px;\n    line-height: 1;\n    cursor: pointer;\n}\n\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-sortbtn:hover {\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n    color: var(--SmartThemeEmColor, #9c7bd6);\n}\n\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-sortbtn.wbm-on {\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n    color: var(--SmartThemeEmColor, #9c7bd6);\n}\n\n/* 排序态：Token 数字让位给 ↑↓ */\n#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .prompt_manager_prompt_tokens,\n#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .prompt_manager_prompt_tokens * {\n    display: none !important;\n}\n\n#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step {\n    display: inline-flex !important;\n    align-items: center;\n    gap: 2px;\n    margin: 0 2px 0 6px;\n    padding: 0;\n    flex: 0 0 auto;\n    line-height: 1;\n    order: 99;\n}\n\n#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step > * {\n    width: 22px;\n    height: 22px;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    border-radius: 6px;\n    font-size: 12px;\n    opacity: .6;\n    cursor: pointer;\n    color: var(--SmartThemeBodyColor, #e6e6e6);\n    margin: 0;\n}\n\n#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step > *:hover {\n    opacity: 1;\n    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 24%, transparent);\n}\n\n/* 自绘 SVG 图标（1.3.35）：不依赖宿主裁剪过的图标字体 */\n.wbm-ico { width: 14px; height: 14px; display: block; flex: 0 0 auto; pointer-events: none; }\n.wbm-pm-insert .wbm-ico { width: 13px; height: 13px; }\n.wbm-pm-step .wbm-ico { width: 12px; height: 12px; }\n.wbm-prompt-bar button .wbm-ico { width: 14px; height: 14px; }\n#wbm-talk-preset-btn .wbm-ico { width: 13px; height: 13px; }\n\n/* ================= 1.3.36：排序态 ↑↓ 改用自绘 SVG ================= */\n/* 宿主那份 Font Awesome 是裁剪过的子集，没有 .fa-arrow-up / .fa-arrow-down，\n   之前每行 ↑↓ 是空的「带叉方框」（master 2026-10-22 报的「直接不显示按键」）。\n   现在按钮里放 <svg class=wbm-ico>，不依赖任何图标字体。 */\n#completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step .wbm-ico {\n    width: 14px;\n    height: 14px;\n}\n\n/* 触屏（手机/平板）：↑↓ 抬到 30×28。master 定的可点下限是图标键 34×32、胶囊 30，\n   22px 在手机上是「难以触发」那一档；桌面保持 22px，不为此挤小密度。 */\n@media (pointer: coarse) {\n    #completion_prompt_manager_list li[data-pm-identifier] .wbm-pm-step > * {\n        width: 30px;\n        height: 28px;\n    }\n    #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step > * {\n        width: 30px;\n        height: 28px;\n    }\n    #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] .wbm-pm-step .wbm-ico {\n        width: 16px;\n        height: 16px;\n        height: 16px;\n    }\n}\n\n/* 行内 ⤓：不必选中条目也一直看得见。之前 .25 的透明度在深色主题上等于没有键，\n   master 2026-10-22：「⤓ 不再隐身，直接不显示按键了」。没勾选时点它会提示先勾选。 */\n#completion_prompt_manager_list .wbm-pm-insert.wbm-pm-arrow-off {\n    opacity: .7;\n    cursor: pointer;\n}\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-insert {\n    width: 22px !important;\n    height: 26px !important;\n    margin-right: 4px !important;\n    opacity: .85;\n}\n@media (pointer: coarse) {\n    /* 旧的 !important（width:18px/height:22px）在前，必须同样 !important 才压得住。 */\n    #completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .wbm-pm-insert,\n    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-insert {\n        width: 30px !important;\n        height: 28px !important;\n    }\n    #completion_prompt_manager_list .wbm-pm-insert .wbm-ico {\n        width: 16px;\n        height: 16px;\n    }\n}\n/* ================= 1.3.37：性能 + 手机触摸 ================= */\n/* ⤓ 从勾选框右边挪到行尾（↑↓ 左边）：它原来紧贴勾选框，勾选时经常点到它、把条目搬错位置。\n   order 排序：seq(-5) box(-4) ☰(-3) name(1) 其它(2) token(3) ⤓(98) ↑↓(99)。 */\n#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-insert {\n    order: 98 !important;\n    margin: 0 0 0 8px !important;\n}\n/* 三个自绘键统一：去掉双击缩放/300ms 等待，也不再出蓝色高亮块。 */\n#completion_prompt_manager_list .wbm-pm-box,\n#completion_prompt_manager_list .wbm-pm-insert,\n#completion_prompt_manager_list .wbm-pm-step > * {\n    touch-action: manipulation;\n    -webkit-tap-highlight-color: transparent;\n    user-select: none;\n}\n@media (pointer: coarse) {\n    /* 勾选框放大到 20px 并与 ⤓ 之间留出整整一个名字区的距离（⤓ 已在行尾）。 */\n    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .wbm-pm-box {\n        width: 20px !important;\n        height: 20px !important;\n        margin: 0 8px 0 0 !important;\n    }\n}\n\n\n/* ================= 1.3.38：复制到其它预设 ================= */\n/* 工具栏靠左那个键：与右边排序键同尺寸，靠 margin-right:auto 顶到最左，\n   已选计数改靠右（原来 count 上的 margin-right:auto 会把它也拉到左边）。 */\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-copybtn {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 30px;\n    height: 28px;\n    padding: 0;\n    margin: 0 auto 0 0;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    font-size: 13px;\n    line-height: 1;\n    cursor: pointer;\n    touch-action: manipulation;\n    -webkit-tap-highlight-color: transparent;\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-copybtn:hover {\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n    color: var(--SmartThemeEmColor, #9c7bd6);\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-count {\n    margin-right: 0;\n}\n/* 浮层顶部那句「把 N 条复制到…」，以及预设行里用等宽字体把名字排整齐 */\n.wbm-copy-hint {\n    padding: 8px 14px 6px;\n    font-size: 12px;\n    line-height: 1.5;\n    opacity: .75;\n}\n.wbm-copy-row-name {\n    min-width: 0;\n    overflow: hidden;\n    text-overflow: ellipsis;\n    white-space: nowrap;\n}\n#wbm-settings #wbm-regex-allow {\n    display: block;\n    width: 100%;\n    max-width: 100%;\n    white-space: nowrap;\n    text-align: center;\n    box-sizing: border-box;\n    margin: 8px 0 2px;\n}\n/* ================= 1.3.39：勾选框跟随主题 ================= */\n/* master 2026-10-22 报「勾选框没有随主体变化」，美化「寰宇独奏v1.5」下直接看不见。\n   查下来那套美化的 --SmartThemeBorderColor 是 rgba(251,219,179,0)（全透明），\n   而勾选框原来只靠 border: 2px solid var(--SmartThemeBorderColor) 画框 → 框线透明。\n   改成从正文字色调出来的灰：任何主题下都与底色有反差；勾选后的勾用底色画。 */\n#completion_prompt_manager_list .wbm-pm-box {\n    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 55%, transparent);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 8%, transparent);\n}\n#completion_prompt_manager_list .wbm-pm-box:hover {\n    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 80%, transparent);\n}\n#completion_prompt_manager_list .wbm-pm-box.on {\n    border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 85%, transparent);\n    background: color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 88%, transparent);\n}\n#completion_prompt_manager_list .wbm-pm-box.on::after {\n    border-color: var(--SmartThemeBlurTintColor, #1c1c26);\n}\n\n/* ================= 1.3.39：插入提示词的搜索行 / 触屏浮窗 ================= */\n.wbm-append-bar {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    flex-wrap: nowrap;\n    margin: 6px 0 4px;\n}\n.wbm-append-bar .wbm-append-search {\n    flex: 1 1 auto;\n    min-width: 0;\n    height: 30px;\n    padding: 0 10px;\n    box-sizing: border-box;\n    font-family: inherit;\n}\n.wbm-append-bar .wbm-append-btn {\n    display: none;\n    flex: 0 0 auto;\n    align-items: center;\n    gap: 6px;\n    height: 30px;\n    padding: 0 12px;\n    white-space: nowrap;\n}\n.wbm-append-bar .wbm-append-count {\n    flex: 0 0 auto;\n    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n    font-size: 11px;\n    opacity: .6;\n    white-space: nowrap;\n}\n@media (pointer: coarse) {\n    /* 手机：原生下拉收起来，改用我们自己的浮窗 */\n    .wbm-append-bar[data-coarse='1'] .wbm-append-search { display: none; }\n    .wbm-append-bar[data-coarse='1'] .wbm-append-btn { display: inline-flex; }\n    #completion_prompt_manager_footer_append_prompt { display: none !important; }\n}\n\n/* ================= 1.3.39：复制确认条 ================= */\n.wbm-copy-confirm {\n    flex: 0 0 auto;\n    border-top: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 22%, transparent);\n    padding: 10px 14px 14px;\n    background: var(--SmartThemeBlurTintColor, rgba(28, 28, 38, .96));\n}\n.wbm-copy-confirm-text {\n    font-size: 12px;\n    line-height: 1.5;\n    opacity: .85;\n    margin-bottom: 8px;\n}\n.wbm-copy-confirm-actions {\n    display: flex;\n    gap: 8px;\n    justify-content: flex-end;\n}\n.wbm-copy-preset-row.active {\n    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 22%, transparent);\n}\n.wbm-append-tag {\n    margin-left: auto;\n    padding-left: 10px;\n    font-size: 11px;\n    line-height: 1.4;\n    opacity: .55;\n    white-space: nowrap;\n}\n.wbm-append-inlist { opacity: .7; }\n\n/* ================= 1.3.40：查找已有条目 ================= */\n/* master 2026-10-22：参考 txt 编辑器的查找——搜已经添加好的条目，用上下切换跳转。\n   只高亮 + 跳转，不筛选、不动顺序。侧栏只有 243px 宽，所以查找行单独占第二行、平时收起。 */\n#completion_prompt_manager > .wbm-prompt-bar {\n    flex-wrap: wrap;\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-findbtn {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 30px;\n    height: 28px;\n    padding: 0;\n    border-radius: 8px;\n    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    cursor: pointer;\n    touch-action: manipulation;\n    -webkit-tap-highlight-color: transparent;\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-findbtn:hover,\n#completion_prompt_manager > .wbm-prompt-bar.wbm-find-open .wbm-prompt-findbtn {\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n    color: var(--SmartThemeEmColor, #9c7bd6);\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-find-tools {\n    display: none;\n    align-items: center;\n    gap: 6px;\n    flex: 1 0 100%;\n    min-width: 0;\n    margin: 2px 0 0;\n}\n#completion_prompt_manager > .wbm-prompt-bar.wbm-find-open .wbm-find-tools {\n    display: flex;\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-find {\n    flex: 1 1 auto;\n    min-width: 0;\n    height: 28px;\n    padding: 0 10px;\n    box-sizing: border-box;\n    font-family: inherit;\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-find-prev,\n#completion_prompt_manager > .wbm-prompt-bar .wbm-find-next {\n    flex: 0 0 auto;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 24px;\n    height: 28px;\n    padding: 0;\n    border-radius: 6px;\n    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 40%, transparent);\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    cursor: pointer;\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-find-prev:disabled,\n#completion_prompt_manager > .wbm-prompt-bar .wbm-find-next:disabled {\n    opacity: .3;\n    cursor: default;\n}\n#completion_prompt_manager > .wbm-prompt-bar .wbm-find-count {\n    flex: 0 0 auto;\n    min-width: 34px;\n    text-align: right;\n    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n    font-size: 11px;\n    opacity: .7;\n    white-space: nowrap;\n}\n#completion_prompt_manager_list li[data-pm-identifier].wbm-find-hit {\n    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 16%, transparent);\n}\n#completion_prompt_manager_list li[data-pm-identifier].wbm-find-cur {\n    background: color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 28%, transparent);\n    outline: 2px solid color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 70%, transparent);\n    outline-offset: -2px;\n}\n@media (pointer: coarse) {\n    #completion_prompt_manager > .wbm-prompt-bar .wbm-find-prev,\n    #completion_prompt_manager > .wbm-prompt-bar .wbm-find-next {\n        width: 30px;\n        height: 30px;\n    }\n}.wbm-persona-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;}.wbm-persona-filter{display:flex;align-items:center;gap:8px;width:100%;min-height:38px;padding:0 10px;border-radius:10px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 12%, transparent);color:var(--SmartThemeBodyColor, inherit);font:inherit;font-size:13px;line-height:1.2;text-align:left;cursor:pointer;}.wbm-persona-filter:hover{border-color:var(--SmartThemeEmColor, #9c7bd6);}.wbm-persona-filter-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.wbm-persona-filter .wbm-ico{flex:0 0 auto;width:14px;height:14px;opacity:.75;}.wbm-persona-manage{flex:0 0 auto;height:30px;padding:0 12px;border-radius:999px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);background:transparent;color:var(--SmartThemeBodyColor, inherit);font:inherit;font-size:12px;cursor:pointer;}.wbm-persona-manage:hover{border-color:var(--SmartThemeEmColor, #9c7bd6);}.wbm-persona-hint{flex:0 0 auto;margin-left:auto;font-family:ui-monospace, monospace;font-size:11px;opacity:.6;}.wbm-persona-filter-row.on{border-color:var(--SmartThemeEmColor, #9c7bd6);background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 20%, transparent);}.wbm-persona-tag{display:inline-flex;align-items:center;margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 18%, transparent);color:var(--SmartThemeBodyColor, inherit);font-size:10px;line-height:14px;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}.wbm-persona-tag-none{background:transparent;opacity:.5;}@media (pointer: coarse){.wbm-persona-filter{min-height:42px;font-size:14px;}.wbm-persona-manage{height:34px;font-size:13px;}}\n/* ================= 1.3.43：人设列表分页 ================= */\n/* master 2026-10-23：角色多了列表特别长、还要同时显示多张图，所以按分组显示也分页。\n   页码占宿主分页条的位置（筛选时宿主那排临时藏起来），一个键换每页条数 5/10/20/50。 */\n.wbm-persona-grouppager {\n    display: none;\n    align-items: center;\n    gap: 6px;\n    flex: 1 0 100%;\n    min-width: 0;\n    margin-top: 2px;\n}\n.wbm-persona-grouppager .wbm-persona-pagebtn {\n    height: 26px;\n    min-width: 26px;\n    padding: 0 6px;\n    font-size: 13px;\n    line-height: 1;\n}\n.wbm-persona-grouppager .wbm-persona-pageinfo {\n    font-size: 11px;\n    white-space: nowrap;\n    overflow: hidden;\n    text-overflow: ellipsis;\n}\n.wbm-persona-sizebtn {\n    flex: 0 0 auto;\n    height: 30px;\n    padding: 0 10px;\n    border-radius: 999px;\n    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);\n    background: transparent;\n    color: var(--SmartThemeBodyColor, inherit);\n    font: inherit;\n    font-size: 11.5px;\n    white-space: nowrap;\n    cursor: pointer;\n}\n.wbm-persona-sizebtn:hover {\n    border-color: var(--SmartThemeEmColor, #9c7bd6);\n    color: var(--SmartThemeEmColor, #9c7bd6);\n}\n@media (pointer: coarse) {\n    .wbm-persona-grouppager .wbm-persona-pagebtn { height: 30px; min-width: 30px; }\n    .wbm-persona-sizebtn { height: 34px; font-size: 12.5px; }\n}\n\n/* ================= 1.3.42：人设分组性能与手感 ================= */\n.wbm-picker-row:hover{background:color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 8%, transparent);}.wbm-picker-row:active{background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 26%, transparent);}.wbm-persona-filter-row{cursor:pointer;}.wbm-persona-row{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;}.wbm-persona-row .wbm-picker-name{flex:0 1 auto;max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.wbm-persona-row-title{flex:0 1 auto;min-width:0;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;opacity:.6;}.wbm-persona-row-group{flex:0 0 auto;margin-left:auto;padding:0 8px;border-radius:999px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 40%, transparent);background:color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 18%, transparent);font-size:11px;line-height:18px;white-space:nowrap;max-width:104px;overflow:hidden;text-overflow:ellipsis;}.wbm-persona-row-group-none{background:transparent;opacity:.45;}.wbm-persona-row .wbm-preset-tool{flex:0 0 auto;white-space:nowrap;}.wbm-persona-pager{display:flex;align-items:center;gap:10px;padding:8px 14px 12px;flex:0 0 auto;}.wbm-persona-pagebtn{height:30px;padding:0 12px;border-radius:8px;border:1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 42%, transparent);background:transparent;color:var(--SmartThemeBodyColor, inherit);font:inherit;font-size:12px;cursor:pointer;}.wbm-persona-pagebtn:hover:not(:disabled){border-color:var(--SmartThemeEmColor, #9c7bd6);color:var(--SmartThemeEmColor, #9c7bd6);}.wbm-persona-pagebtn:disabled{opacity:.35;cursor:default;}.wbm-persona-pageinfo{flex:1 1 auto;text-align:center;font-family:ui-monospace, monospace;font-size:11.5px;opacity:.7;}.wbm-persona-bar.wbm-flash .wbm-persona-filter{animation:wbm-flash .62s ease-out 1;}@keyframes wbm-flash{from{box-shadow:0 0 0 3px color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 65%, transparent);}to{box-shadow:0 0 0 0 transparent;}}@media (pointer: coarse){.wbm-persona-pagebtn{height:36px;font-size:13px;}.wbm-persona-row .wbm-preset-tool{min-height:34px;}}\n\n/* ===== 1.3.45：行内编辑与分组，浮层不关 ===== */\n.wbm-inline-groups { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 auto; min-width: 0; }\n.wbm-inline-groups .wbm-picker-action { height: 26px; padding: 0 8px; font-size: 12.5px; }\n.wbm-picker-row[data-role='preset-edit'] { flex-wrap: wrap; gap: 6px; align-items: center; cursor: default; }\n.wbm-picker-row[data-role='preset-edit']:hover { background: transparent; }\n.wbm-picker-titlerow .wbm-preset-tool { margin-left: auto; }\n@media (pointer: coarse) {\n    .wbm-inline-groups .wbm-picker-action { height: 32px; padding: 0 10px; font-size: 13.5px; }\n}\n\n#completion_prompt_manager_list li.wbm-find-pulse{animation:wbm-find-pulse .62s ease-out}@keyframes wbm-find-pulse{0%{box-shadow:0 0 0 2px color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 85%, transparent)}100%{box-shadow:0 0 0 2px color-mix(in srgb, var(--SmartThemeEmColor, #9c7bd6) 0%, transparent)}}\n\n/* ---------- 1.3.51：宿主分页控件不许被压扁（TT 的 #WorldInfo 固定 640px） ---------- */\n.wbm-scope-row #world_info_pagination {\n    flex: 0 0 auto;\n}\n.wbm-scope-row #world_info_pagination .paginationjs,\n.wbm-scope-row #world_info_pagination .paginationjs-nav,\n.wbm-scope-row #world_info_pagination .paginationjs-pages {\n    flex: 0 0 auto;\n}\n.wbm-scope-row #world_info_pagination .paginationjs-nav {\n    white-space: nowrap;\n}\n.wbm-scope-row #world_info_pagination select {\n    flex: 0 0 auto;\n    min-width: 4.6em;\n}\n\n/* 条目标题的伸缩底线：宿主给的是 flex:1 1 0%，抽屉一窄就压到 min-content */\n#world_popup_entries_list .WIEntryTitleAndStatus {\n    flex: 1 1 22em;\n    min-width: 14em;\n}\n#world_popup_entries_list .WIEntryTitleAndStatus > .flex-container {\n    flex: 1 1 auto;\n    min-width: 0;\n}\n#world_popup_entries_list .WIEntryTitleAndStatus textarea[name=\"comment\"] {\n    width: 100%;\n}\n\n/* ================= 1.3.53：世界书条目表头 ================= */\n/* 单排：小标题垂直居中到列中线（master 2026-10-23：位置对，但要上下居中） */\n#world_popup_entries_list > #WIEntryHeaderTitlesPC {\n    align-items: center;\n}\n/* 表头条内垂直居中：这条 !important 是刻意的——宿主模板给 <small> 带 inline 样式，\n   而且 alignEntryHeaders() 也会写 inline top，两者都要被这条压住，统一由样式表说话。 */\n#world_popup_entries_list > #WIEntryHeaderTitlesPC > small {\n    top: 50% !important;\n    transform: translateY(-50%) !important;\n}\n\n/* 折成两排：整排表头无法与任何一列对齐，让位给每格自己的小标题\n   （复用宿主的 .WIEntryHeaderTitleMobile，手机端就是这么显示的，不另造标注）。\n   左右留白收到最小，四个字段按剩余宽度自动排一行或两行。 */\n#world_popup_entries_list.wbm-wi-wrapped > #WIEntryHeaderTitlesPC {\n    display: none !important;\n}\n#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls {\n    flex-wrap: wrap;\n    gap: 6px 10px;\n}\n#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls .world_entry_form_control {\n    flex: 1 1 7em;\n    min-width: 0;\n}\n#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls .WIEntryHeaderTitleMobile {\n    display: block !important;\n    font-size: 11.5px;\n    line-height: 1.25;\n    opacity: .68;\n    margin: 0 0 2px;\n    padding: 0 1px;\n    white-space: nowrap;\n}\n#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls select,\n#world_popup_entries_list.wbm-wi-wrapped .WIEnteryHeaderControls input {\n    width: 100% !important;\n    max-width: none !important;\n}\n\n/* ================= 提示词编辑框限制高度（1.3.0） =================\n   TT 酒馆里预设条目的编辑框会按内容整段展开，长条目时底部按钮被顶出视野。\n   这里只给酒馆自己的编辑框加一个上限，让它像 ST 那样在框内滚动；\n   酒馆（或其它扩展）自带的复制、查找、替换等按钮一律不碰、也不重排。 */\nhtml.wbm-pmcap-on #completion_prompt_manager_popup .completion_prompt_manager_popup_entry_form_control:has(#completion_prompt_manager_popup_entry_form_prompt) {\n    min-height: 0;\n    overflow: hidden;\n}\nhtml.wbm-pmcap-on #completion_prompt_manager_popup #completion_prompt_manager_popup_entry_form_prompt {\n    flex: 1 1 auto;\n    height: auto;\n    min-height: 200px;\n    max-height: min(52vh, 640px);\n    max-height: min(52dvh, 640px);\n    overflow-y: auto;\n    resize: vertical;\n}\n@media (max-width: 760px) {\n    html.wbm-pmcap-on #completion_prompt_manager_popup #completion_prompt_manager_popup_entry_form_prompt {\n        max-height: min(46vh, 520px);\n        max-height: min(46dvh, 520px);\n    }\n}\n";
 /* ==== WBM_CSS_END ==== */
 
     function ourScriptUrl() {
@@ -8379,6 +11865,15 @@ const WBM_CSS = "/* 世界书增强 · 样式 v1.2.0\n   全部限定在 #WIMult
         bindMessageDblClick();
         bindSwipeCounterTap();
         bindSwipeBulkDelete();
+        ensureTalkPresetButton();
+        hookPromptManagerExtras();
+        bindPromptDetachGuard();
+        bindRegexPanelRefresh();
+    bindPersonaCacheRefresh();
+        bindFrontendCardGuard();
+        ensurePersonaBar();
+        setTimeout(() => { regexGuardCheck({ silent: true }); }, 4000);
+        setTimeout(() => { ensurePersonaBar(); }, 1200);
         hookSwipeLayout();
         bindMsgEditRow();
         /* 横滑提示：窗口尺寸/横竖屏一变就重算一次（只写状态，不重排内容） */
@@ -8390,6 +11885,9 @@ const WBM_CSS = "/* 世界书增强 · 样式 v1.2.0\n   全部限定在 #WIMult
         /* 启动后查一次版本（约 300 字节的请求）；有新版本会提示并重载 */
         setTimeout(checkForNewVersion, 1500);
         /* 弱网兜底：样式表没生效就重试（多一次 <link>，没有轮询、没有性能代价） */
+        injectInlineStyles();
+        injectInlineStyles();
+        injectInlineStyles();
         injectInlineStyles();
         injectInlineStyles();
         setTimeout(ensureStyles, 2500);
@@ -8449,8 +11947,20 @@ const WBM_CSS = "/* 世界书增强 · 样式 v1.2.0\n   全部限定在 #WIMult
         watchdogTimer = setInterval(() => {
             const host = hostEl();
             const root = document.getElementById(ROOT_ID);
+            /* 宿主会整块重建「扩展程序」抽屉，我们的设置面板跟着没了就点不回来（1.3.56 实测） */
+            if (document.getElementById('extensions_settings') && !document.getElementById('wbm-settings')) {
+                try { injectSettingsPanel(); } catch (err) { /* 下次再看 */ }
+            }
             if (host && root && host.getAttribute('data-wbm-ready') === '1') {
                 watchdogTries = 0;
+                /* 1.3.44 性能：宿主没重建时这里什么都别做（以前每 5 秒跑一遍
+                   syncPromptBar + ensurePromptOrderComplete，等于每 5 秒白扫 200+ 行）。 */
+                const barGone = !document.querySelector('#completion_prompt_manager > .wbm-prompt-bar');
+                const btnGone = !document.getElementById('wbm-talk-preset-btn');
+                if (!barGone && !btnGone) return;
+                if (btnGone) ensureTalkPresetButton();
+                if (barGone) { hookPromptManagerExtras(); }
+                bindPromptDetachGuard();
                 return;
             }
             watchdogTries += 1;
