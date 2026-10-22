@@ -10344,7 +10344,10 @@ function bindMessageDblClick() {
             try { if (featureOn('headerAlign')) { alignEntryHeadersOnce(); ensureHeaderAlignObserver(); } } catch (err) { /* 忽略 */ }
         } else {
             document.documentElement.setAttribute('data-wbm-off', '1');
-            teardownInjected();
+            /* 关闭方向不再就地拆（1.3.0 修）：teardownInjected 按 [class*="wbm-"] 整批删节点，
+               而我们给宿主的行加过 wbm-world-row / wbm-scope-row 这类标记，于是把宿主的
+               「创建 / 选择以编辑」整行也一起删掉，世界书面板只剩一行空壳（master 报的那个 bug）。
+               现在关闭一律走刷新：这里只挂标记，真正的原生界面由刷新后的新页面给出。 */
         }
         applySwipeCounterLayout();
         syncPanelNotes();
@@ -11396,7 +11399,7 @@ function bindMessageDblClick() {
             enhanceBox.addEventListener('change', () => {
                 store.enhanceEnabled = !!enhanceBox.checked;
                 persistStore();
-                applyEnhanceState();
+                if (enhanceBox.checked) applyEnhanceState();
                 if (enhanceBox.checked) {
                     /* 全部关闭 → 再打开：卸载是不可逆的（人设横条要等宿主把人设面板渲染出来，
                        提示词工具条要等管理器重绘），逐块重挂容易漏。直接重载一次最稳，
@@ -11409,7 +11412,14 @@ function bindMessageDblClick() {
                     }, 2400);
                     return;
                 }
-                toast('info', '已全部关闭：界面回到原生酒馆，各开关状态已保留');
+                toast('info', '已全部关闭：正在刷新回原生界面…');
+                /* 关闭方向也重载一次（1.3.0 修）：就地卸载会把我们挂在宿主元素上的排法、
+                   宿主自己的 select2 药丸外壳留在半截状态，实测「已启用的世界书」和条目详情
+                   会显示不全，与「关掉即回原生」的承诺不符。重载最干净，代价同样一次刷新。 */
+                try { saveSettingsDebounced(); } catch (err) { /* 忽略 */ }
+                setTimeout(() => {
+                    try { window.location.reload(); } catch (err) { /* 刷不动就保持当前状态 */ }
+                }, 2400);
             });
         }
         const FEATURE_ROWS = [
@@ -11831,6 +11841,23 @@ const WBM_CSS = "/* 世界书增强 · 样式 v1.2.0\n   全部限定在 #WIMult
 
     function bootStep() {
         if (healDuplicatedPage()) return;
+        /* 总开关在设置里已经是「全部关闭」：本次只把设置面板挂回去，其余一律不接管。
+           这样关闭状态下界面是货真价实的原生酒馆（1.3.0 修：以前会半接管，
+           teardown 还按 [class*="wbm-"] 误删宿主的工具行，世界书面板只剩空壳）。 */
+        try {
+            if (document.documentElement.getAttribute('data-wbm-booted-off') === '1') return;
+            const earlyCfg = ((stCtx() && stCtx().extensionSettings) || {})[SETTINGS_KEY];
+            if (earlyCfg && earlyCfg.enhanceEnabled === false) {
+                document.documentElement.setAttribute('data-wbm-booted-off', '1');
+                document.documentElement.setAttribute('data-wbm-off', '1');
+                injectInlineStyles();
+                loadStore().then(() => {
+                    injectSettingsPanel();
+                    syncPanelNotes();
+                }).catch(() => {});
+                return;
+            }
+        } catch (err) { /* 拿不到设置就按开启走 */ }
         const host = hostEl();
         if (!host) {
             bootTries += 1;
