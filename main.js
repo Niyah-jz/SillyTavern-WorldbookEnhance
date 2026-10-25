@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    const VERSION = (window.__wbmBoot && window.__wbmBoot.version) || '1.3.0';
+    const VERSION = (window.__wbmBoot && window.__wbmBoot.version) || '1.3.1';
     /* 构建标记：版本号不随小修变化（都写 1.0.3），只看版本号分不出新旧，
        所以另外标一个构建号，控制台里能直接看出页面跑的是哪一份。
        发布时与 manifest 里 js/css 的 ?ver 保持一致（构建脚本会校验）。 */
@@ -724,6 +724,19 @@ function updateEditorButton() {
     let nativePickerAt = 0;
     let nativePickerNode = null;
 
+    /* 触发策略的三个选项在宿主里只有 emoji（index.html:7159 的 option 文本是 🔵/🟢/🔗，
+       文字说明写在 title 上）。浮层里光显示一个圆圈看不出区别，这里补上中文状态名。 */
+    const ENTRY_STATE_OPTION_LABELS = { constant: '🔵 常量', normal: '🟢 正常', vectorized: '🔗 向量化' };
+
+    function nativeOptionLabel(select, option) {
+        const value = String(option.value || '');
+        if (String(select.name || '') === 'entryStateSelector' && ENTRY_STATE_OPTION_LABELS[value]) {
+            return ENTRY_STATE_OPTION_LABELS[value];
+        }
+        const text = String(option.textContent || '').trim();
+        return text || value;
+    }
+
     function openNativeSelectPicker(select, onClose) {
         try {
             closeEditorPicker(true);
@@ -734,7 +747,7 @@ function updateEditorButton() {
             const list = el('div', 'wbm-picker-list wbm-native-select-list');
             const all = Array.from(select.options);
             all.forEach((option, index) => {
-                const label = String(option.textContent || '').trim();
+                const label = nativeOptionLabel(select, option);
                 if (option.hidden || !label) return;
                 const row = el('div', 'wbm-picker-row' + (option.selected ? ' active' : ''));
                 row.dataset.role = 'native-option';
@@ -759,7 +772,11 @@ function updateEditorButton() {
                 const option = select.options[Number(row.dataset.index)];
                 if (option) {
                     Array.from(select.options).forEach((opt) => { opt.selected = (opt === option); });
-                    /* 原生 change：宿主的排序/位置/逻辑都是靠它落账 */
+                    /* 条目表单里的下拉，宿主全部挂在 **input** 上（world-info.js 的
+                       entryStateSelector:3209、position:3338、entryLogicType:3524 都是 .on('input')），
+                       只派 change 等于当场白改：界面看着变了、saveWorldInfo 一次都没发，重绘后又缩回原值。
+                       工具栏那两个下拉（排序 / 每页）挂的是 change，所以两个都派，两头都满足。 */
+                    select.dispatchEvent(new Event('input', { bubbles: true }));
                     select.dispatchEvent(new Event('change', { bubbles: true }));
                 }
                 closeEditorPicker();
