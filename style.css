@@ -3081,7 +3081,7 @@ li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {
     flex: 0 0 auto;
     padding: 4px 12px;
     border-radius: 8px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 38%, transparent);
     background: transparent;
     color: inherit;
     font-family: inherit;
@@ -3246,25 +3246,32 @@ li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {
     pointer-events: none !important;
 }
 
-@media (pointer: coarse) {
-    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {
-        display: none !important;
-    }
+/* ================= 1.3.5：宿主原生拖拽回来了 =================
+   master 2026-10-27：「取消掉预设条目的内容后，没能把酒馆原生的拖动功能还回来」。
+   1.3.24 起这里曾把 ☰ 在手机、电脑、排序态全部隐藏；现在恢复：手机/平板靠 ☰ 把手拖
+   （宿主 isMobile() 时 handle 就是 .drag-handle），电脑整行可拖（宿主 handle 为 null）。
+   点星号 / 点名字 / 点按钮不会误起拖——那几块由 hardenPromptSortable 的 cancel 排除。 */
+/* 只要手感和触屏面积，不碰 display / position：宿主 handle 生效时（手机、平板）
+   自己会把 ☰ 显示出来，电脑端 handle 为 null，它本来就是隐藏的、整行可拖。 */
+#completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle {
+    opacity: .55;
+    cursor: grab;
+    touch-action: none;
 }
-
-/* 触屏（手机/平板）不提供拖拽：☰ 直接不画。排序用勾选 + ↓。 */
-@media (pointer: coarse) {
-    #completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle,
-    #completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {
-        display: none !important;
-    }
+#completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle:hover {
+    opacity: .85;
 }
-
-/* ================= 1.3.24：拖拽整体下线 + 顶部常驻工具条 + 每行 ↑↓ 微调 ================= */
-/* ☰ 不再出现（手机、电脑、排序态都一样） */
-#completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle,
-#completion_prompt_manager #completion_prompt_manager_list.wbm-sorting li[data-pm-identifier] > .drag-handle {
-    display: none !important;
+/* 触屏上把 ☰ 的命中面积撑到能按住的尺寸（master 2026-10-21 定的下限：
+   图标按钮 34×32，不许为了省地方缩小到用户难以触发）。宿主的把手是
+   position:absolute + height:100%，所以这里只撑宽、不动位置。 */
+@media (pointer: coarse), (max-width: 760px) {
+    #completion_prompt_manager #completion_prompt_manager_list li[data-pm-identifier] > .drag-handle {
+        min-width: 30px;
+        padding: 0 8px;
+        opacity: .75;
+        align-items: center;
+        justify-content: center;
+    }
 }
 
 /* 工具条常驻在提示词管理器顶部，滚到列表中间也看得到 */
@@ -3391,7 +3398,7 @@ li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {
     height: 28px;
     padding: 0;
     border-radius: 8px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 38%, transparent);
     background: transparent;
     color: var(--SmartThemeBodyColor, inherit);
     font-size: 13px;
@@ -3539,9 +3546,9 @@ li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {
     width: 30px;
     height: 28px;
     padding: 0;
-    margin: 0 auto 0 0;
+    margin: 0;
     border-radius: 8px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 38%, transparent);
     background: transparent;
     color: var(--SmartThemeBodyColor, inherit);
     font-size: 13px;
@@ -3675,7 +3682,7 @@ li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {
 #completion_prompt_manager > .wbm-prompt-bar {
     flex-wrap: wrap;
 }
-#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-findbtn {
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-clonebtn {\n flex: 0 0 auto;\n display: inline-flex;\n align-items: center;\n justify-content: center;\n width: 30px;\n height: 28px;\n padding: 0;\n border-radius: 8px;\n border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 38%, transparent);\n background: transparent;\n color: inherit;\n cursor: pointer;\n}\n.wbm-prompt-clonebtn:hover {\n border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 45%, transparent);\n}\n@media (pointer: coarse) {\n .wbm-prompt-clonebtn { width: 34px; height: 32px; }\n}\n.wbm-prompt-findbtn {
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
@@ -3684,7 +3691,7 @@ li.completion_prompt_manager_prompt .completion_prompt_manager_prompt_name {
     height: 28px;
     padding: 0;
     border-radius: 8px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, .4));
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 38%, transparent);
     background: transparent;
     color: var(--SmartThemeBodyColor, inherit);
     cursor: pointer;
@@ -3914,3 +3921,9 @@ html.wbm-pmcap-on #completion_prompt_manager_popup #completion_prompt_manager_po
         max-height: min(46dvh, 520px);
     }
 }
+.wbm-state-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #cfcfcf) 38%, transparent); background: transparent; color: inherit; font-family: inherit; font-size: 12px; cursor: pointer; }\n.wbm-state-pill .wbm-state-pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.wbm-state-pill .wbm-ico { width: 12px; height: 12px; flex: 0 0 auto; opacity: .7; }\n.wbm-state-pill:hover { border-color: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 45%, transparent); }\n@media (max-width: 760px), (pointer: coarse) { .wbm-state-pill { height: 34px; padding: 0 12px; } }\n
+
+/* 1.3.5.1：两个复制键靠左并排，其余（查找/计数/排序）由 findbtn 的 auto 顶到右边 */
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-clonebtn,
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-copybtn { margin: 0; }
+#completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-findbtn { margin-left: auto; }
