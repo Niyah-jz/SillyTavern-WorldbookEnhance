@@ -964,9 +964,12 @@
 
 /* 组内滚动：展开一组时只在这块里滚，别的组不被推走 */
 .wbm-cat-books {
-    max-height: 60vh;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
+    /* master 2026-10-27：这里原来是第二层滚动（max-height:60vh + overflow-y:auto），
+       套在面板自己的滚动里。手机上手指一划先滚内层、内层到头又不把事件交出去，
+       表现为「划不动 / 划一下跳一段」；删得越多内层内容越短，越界点一直在变，手感越来越怪。
+       现在只由面板本身（.wbm-picker-list.wbm-cat-body）滚一层。 */
+    max-height: none;
+    overflow: visible;
     padding: 2px 0 6px;
 }
 
@@ -3927,3 +3930,17 @@ html.wbm-pmcap-on #completion_prompt_manager_popup #completion_prompt_manager_po
 #completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-clonebtn,
 #completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-copybtn { margin: 0; }
 #completion_prompt_manager > .wbm-prompt-bar .wbm-prompt-findbtn { margin-left: auto; }
+
+/* 1.3.5：世界书条目里的「绑定到角色或标签 / 筛选生成触发器」也是宿主的原生多选列表，
+   换成胶囊后撑满原来那一格，右边留出箭头位置 */
+#world_popup .range-block-range > .wbm-state-pill {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    min-width: 0;
+}
+#world_popup .range-block-range > .wbm-state-pill .wbm-state-pill-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

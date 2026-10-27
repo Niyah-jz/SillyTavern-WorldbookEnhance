@@ -20,7 +20,7 @@ function wbmOwnStamp() {
             if (ver) return ver;
         } catch (err) { /* 继续找下一个 */ }
     }
-    return '1.3.5';
+    return '1.4.0';
 }
 
 const WBM_VERSION = wbmOwnStamp();
