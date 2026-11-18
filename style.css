@@ -1188,6 +1188,8 @@
 /* 批量移动/复制入口：条目列表上方的小按钮 */
 .wbm-batch-bar {
     display: flex;
+    flex-shrink: 0;
+    min-height: 36px;
     flex-wrap: wrap;
     gap: 8px;
     justify-content: flex-end;
@@ -1436,6 +1438,8 @@ html.wbm-quiet-resize {
 /* 筛选条：整个框按内容收窄、靠右对齐；「筛选」标注紧贴第一个键，不飘到最左边 */
 .wbm-entry-favbar {
     display: flex;
+    flex-shrink: 0;
+    min-height: 36px;
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
